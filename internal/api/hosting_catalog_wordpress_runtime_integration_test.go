@@ -1192,6 +1192,10 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	}
 	assertSource()
 	externalSamples := wordpressRuntimeExternalSQLSamples()
+	localSamples := wordpressRuntimeLocalSQLSamples()
+	if len(localSamples) != 3 || wordpressRuntimeExternalSQL(t, source, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='nerocd_local_file_import_proof'") != "0" || wordpressRuntimeExternalSQL(t, deployed, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='nerocd_local_file_import_proof'") != "0" {
+		t.Fatal("local SQL fixture proof table already exists or samples unavailable")
+	}
 	if len(externalSamples) != 3 || wordpressRuntimeExternalSQL(t, source, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='nerocd_external_import_proof'") != "0" || wordpressRuntimeExternalSQL(t, deployed, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='nerocd_external_import_proof'") != "0" {
 		t.Fatal("external SQL fixture proof table already exists or samples unavailable")
 	}
@@ -1313,12 +1317,14 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	}
 	assertSource()
 	t.Log("COMPOSE_MYSQL_DATABASE_RETENTION_MANUAL_PASS reviewed scoped exact batch; identical API replay admitted one execution; selected physical copies deleted and actual protections/newest fourth preserved")
-	wordpressRuntimeVerifyExternalSQL(t, f, target, deployed, source, externalSamples, externalIdentities, externalBackupsBefore, externalUploadsBefore, failedPlans[0].DaemonID)
+	wordpressRuntimeVerifyExternalSQL(t, f, target, deployed, source, externalSamples, externalIdentities, externalBackupsBefore, externalUploadsBefore, failedPlans[0].DaemonID, false)
+	wordpressRuntimeVerifyExternalSQL(t, f, target, deployed, source, localSamples, nil, externalBackupsBefore, externalUploadsBefore, failedPlans[0].DaemonID, true)
 	if wordpressRuntimePost(t, deployed, "read", strconv.FormatInt(written.ID, 10), "") != written {
 		t.Fatal("external SQL import or rejected inspection changed unrelated target WordPress data")
 	}
 	assertSource()
 	t.Log("COMPOSE_MYSQL_EXTERNAL_S3_IMPORT_PASS independently seeded plain and magic-detected gzip SQL; immutable receipts; application-user target imports and identical API replay; truncated gzip rejected before SQL; source and writers preserved without backup provenance")
+	t.Log("COMPOSE_MYSQL_LOCAL_FILE_IMPORT_PASS real browser File plain and magic-detected gzip; immutable upload receipts and exact metadata/import API replay; application-account target SQL; truncated gzip rejected before ownership; no backup provenance or new dump; interrupted-stream failures covered separately by focused seams")
 	t.Log("COMPOSE_MYSQL_DATABASE_RETENTION_SURVIVOR_PASS third local removed by real automatic publication; exact surviving remote imported; mutation A retained and later B excluded")
 	terminal := wordpressRuntimeImportFailures(t, f, resource, installed, source, fourth, fourthUpload, fourthObject, silo, assertSource)
 	t.Log("COMPOSE_MYSQL_DATABASE_IMPORT_PASS snapshot target write exact HTTP source Host; original HTTPS/uploads preserved; no filesystem or URL migration")
@@ -1351,6 +1357,25 @@ func wordpressRuntimeExternalSQLSamples() []wordpressRuntimeExternalSQLSample {
 	}
 }
 
+func wordpressRuntimeLocalSQLSamples() []wordpressRuntimeExternalSQLSample {
+	plain := []byte("CREATE TABLE IF NOT EXISTS nerocd_local_file_import_proof(id INT PRIMARY KEY, marker VARCHAR(64), executor_user VARCHAR(128)); INSERT INTO nerocd_local_file_import_proof VALUES(1,'local_plain',CURRENT_USER()) ON DUPLICATE KEY UPDATE marker='local_plain';\n")
+	update := []byte("UPDATE nerocd_local_file_import_proof SET marker='local_gzip' WHERE id=1;\n")
+	var encoded bytes.Buffer
+	writer := gzip.NewWriter(&encoded)
+	if _, err := writer.Write(update); err != nil {
+		return nil
+	}
+	if err := writer.Close(); err != nil {
+		return nil
+	}
+	gzipSQL := append([]byte(nil), encoded.Bytes()...)
+	return []wordpressRuntimeExternalSQLSample{
+		{Key: "local.sql", Encoded: plain, SQL: plain, Compression: "plain"},
+		{Key: "display.data", Encoded: gzipSQL, SQL: update, Compression: "gzip"},
+		{Key: "broken.sql", Encoded: append([]byte(nil), gzipSQL[:len(gzipSQL)-8]...), Compression: "gzip"},
+	}
+}
+
 func wordpressRuntimeExternalSQL(t *testing.T, deployed domain.HostingOperation, query string) string {
 	t.Helper()
 	container := wordpressRuntimeComponent(t, deployed, "mysql", true).ContainerID
@@ -1367,10 +1392,14 @@ printf '[client]\nuser=%s\npassword=%s\nsocket=/var/run/mysqld/mysqld.sock\n' "$
 	return strings.TrimSpace(string(storageRuntimeDocker(t, "exec", container, "sh", "-c", script, "fixture", query)))
 }
 
-func wordpressRuntimeVerifyExternalSQL(t *testing.T, f *storageRuntimeFixture, installed domain.HostingCatalogInstallation, deployed, source domain.HostingOperation, samples []wordpressRuntimeExternalSQLSample, identities map[string]domain.HostingDatabaseImportSourceIdentity, backupsBefore, uploadsBefore int, daemonID string) {
+func wordpressRuntimeVerifyExternalSQL(t *testing.T, f *storageRuntimeFixture, installed domain.HostingCatalogInstallation, deployed, source domain.HostingOperation, samples []wordpressRuntimeExternalSQLSample, identities map[string]domain.HostingDatabaseImportSourceIdentity, backupsBefore, uploadsBefore int, daemonID string, local bool) {
 	t.Helper()
+	version, table, marker := "mysql.compose-external-s3-stage.v1", "nerocd_external_import_proof", "gzip"
+	if local {
+		version, table, marker = "mysql.compose-local-upload-stage.v1", "nerocd_local_file_import_proof", "local_gzip"
+	}
 	var stageCount, importCount, backupsAfter, uploadsAfter int
-	if err := f.database.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM hosting_database_import_stages WHERE target_resource_id=$1),(SELECT count(*) FROM hosting_database_imports WHERE target_resource_id=$1),(SELECT count(*) FROM hosting_database_backups),(SELECT count(*) FROM hosting_database_backup_transfers WHERE mode='upload')`, installed.Resource.ID).Scan(&stageCount, &importCount, &backupsAfter, &uploadsAfter); err != nil || stageCount != 3 || importCount != 2 || backupsAfter != backupsBefore || uploadsAfter != uploadsBefore {
+	if err := f.database.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM hosting_database_import_stages WHERE target_resource_id=$1 AND body->>'version'=$2),(SELECT count(*) FROM hosting_database_imports i JOIN hosting_database_import_stages s ON s.id=i.stage_id WHERE i.target_resource_id=$1 AND s.body->>'version'=$2),(SELECT count(*) FROM hosting_database_backups),(SELECT count(*) FROM hosting_database_backup_transfers WHERE mode='upload')`, installed.Resource.ID, version).Scan(&stageCount, &importCount, &backupsAfter, &uploadsAfter); err != nil || stageCount != 3 || importCount != 2 || backupsAfter != backupsBefore || uploadsAfter != uploadsBefore {
 		t.Fatal("external import fabricated provenance, added a dump, or replay created a second operation", err)
 	}
 	for index, sample := range samples {
@@ -1378,8 +1407,19 @@ func wordpressRuntimeVerifyExternalSQL(t *testing.T, f *storageRuntimeFixture, i
 		var stagePlan domain.HostingDatabaseImportStagePlan
 		var readyRaw []byte
 		var stageRun string
-		if err := f.database.QueryRow(t.Context(), `SELECT body,plan,COALESCE(ready_receipt,'null'::jsonb),COALESCE(run_id,'') FROM hosting_database_import_stages WHERE target_resource_id=$1 AND body->'s3_source'->>'object_key'=$2`, installed.Resource.ID, sample.Key).Scan(&stage, &stagePlan, &readyRaw, &stageRun); err != nil || stage.Validate() != nil || stagePlan.Validate() != nil || stage.ID != stagePlan.Stage.ID || stage.TargetResourceID != installed.Resource.ID || stage.Component != "mysql" || stage.ExpectedDeployedOperationID != deployed.ID || stage.ExpectedResourceGeneration != installed.Resource.Generation || stagePlan.Target.Release.DaemonID != daemonID || stagePlan.Target.Snapshot.DestinationID != f.destinationID || stage.S3Source.TargetID != stagePlan.S3Target.Target.ID || stage.S3Source.Revision != stagePlan.S3Target.Target.Revision || stagePlan.S3Target.Target.Bucket != "nerocd-storage-runtime" || stageRun != "db_import_stage_"+stage.ID {
+		query := `SELECT body,plan,COALESCE(ready_receipt,'null'::jsonb),COALESCE(run_id,'') FROM hosting_database_import_stages WHERE target_resource_id=$1 AND body->'s3_source'->>'object_key'=$2 AND body->>'version'=$3`
+		if local {
+			query = `SELECT body,plan,COALESCE(ready_receipt,'null'::jsonb),COALESCE(run_id,'') FROM hosting_database_import_stages WHERE target_resource_id=$1 AND body->'upload_source'->>'filename'=$2 AND body->>'version'=$3`
+		}
+		if err := f.database.QueryRow(t.Context(), query, installed.Resource.ID, sample.Key, version).Scan(&stage, &stagePlan, &readyRaw, &stageRun); err != nil || stage.Validate() != nil || stagePlan.Validate() != nil || stage.ID != stagePlan.Stage.ID || stage.TargetResourceID != installed.Resource.ID || stage.Component != "mysql" || stage.ExpectedDeployedOperationID != deployed.ID || stage.ExpectedResourceGeneration != installed.Resource.Generation || stagePlan.Target.Release.DaemonID != daemonID || stagePlan.Target.Snapshot.DestinationID != f.destinationID || stageRun != "db_import_stage_"+stage.ID {
 			t.Fatal("external inspection lost exact source, deployment, placement or stage task", err)
+		}
+		if local {
+			if stage.Version != domain.HostingDatabaseImportUploadVersion || stage.UploadSource == nil || stage.UploadSource.Filename != sample.Key || stage.UploadSource.Bytes != int64(len(sample.Encoded)) || stage.UploadHash != stagePlan.UploadIdentityHash() || stage.UploadDeadline == nil || stage.S3Source != (domain.HostingDatabaseImportS3Source{}) || stage.SourceIdentity != nil || stagePlan.S3Target.Target.ID != "" {
+				t.Fatal("local File upload fabricated S3 provenance or changed immutable file receipt")
+			}
+		} else if stage.S3Source.TargetID != stagePlan.S3Target.Target.ID || stage.S3Source.Revision != stagePlan.S3Target.Target.Revision || stagePlan.S3Target.Target.Bucket != "nerocd-storage-runtime" {
+			t.Fatal("external inspection source authority changed")
 		}
 		read := storageRuntimeJSON[domain.HostingDatabaseImportStage](f, "GET", "/api/v1/database-import-stages/"+stage.ID, nil, 200)
 		if !reflect.DeepEqual(read, stage) {
@@ -1397,8 +1437,15 @@ func wordpressRuntimeVerifyExternalSQL(t *testing.T, f *storageRuntimeFixture, i
 			continue
 		}
 		var receipt domain.HostingDatabaseImportReadyReceipt
-		if json.Unmarshal(readyRaw, &receipt) != nil || receipt.ValidateFor(stagePlan) != nil || stage.State != "consumed" || stage.SourceBytes != int64(len(sample.Encoded)) || stage.Compression != sample.Compression || stage.StagedBlob == nil || stage.StagedBlob.Digest != "sha256:"+fmt.Sprintf("%x", sha256.Sum256(sample.SQL)) || stage.StagedBlob.Bytes != int64(len(sample.SQL)) || stage.StagedBlob.Format != "mysql_sql" || stage.StageHash != receipt.Hash || stage.SourceIdentity == nil || !reflect.DeepEqual(*stage.SourceIdentity, identities[sample.Key]) || stage.ExpiresAt == nil || !stage.ExpiresAt.Equal(receipt.ExpiresAt) {
+		if json.Unmarshal(readyRaw, &receipt) != nil || receipt.ValidateFor(stagePlan) != nil || stage.State != "consumed" || stage.SourceBytes != int64(len(sample.Encoded)) || stage.Compression != sample.Compression || stage.StagedBlob == nil || stage.StagedBlob.Digest != "sha256:"+fmt.Sprintf("%x", sha256.Sum256(sample.SQL)) || stage.StagedBlob.Bytes != int64(len(sample.SQL)) || stage.StagedBlob.Format != "mysql_sql" || stage.StageHash != receipt.Hash || stage.ExpiresAt == nil || !stage.ExpiresAt.Equal(receipt.ExpiresAt) {
 			t.Fatal("external immutable receipt lost actual GET identity, encoded size, decoded SQL or expiry")
+		}
+		if local {
+			if receipt.SourceIdentity != nil || stage.SourceIdentity != nil {
+				t.Fatal("local File receipt acquired remote source identity")
+			}
+		} else if stage.SourceIdentity == nil || !reflect.DeepEqual(*stage.SourceIdentity, identities[sample.Key]) {
+			t.Fatal("external immutable receipt lost actual GET identity")
 		}
 		var imported domain.HostingDatabaseImportOperation
 		var importPlan domain.HostingDatabaseImportPlan
@@ -1417,10 +1464,10 @@ func wordpressRuntimeVerifyExternalSQL(t *testing.T, f *storageRuntimeFixture, i
 	}
 	database := wordpressRuntimeComponent(t, deployed, "mysql", true)
 	expectedUser := strings.TrimSpace(string(storageRuntimeDocker(t, "exec", database.ContainerID, "sh", "-c", `printf '%s' "$MYSQL_USER"`)))
-	if expectedUser == "" || expectedUser == "root" || wordpressRuntimeExternalSQL(t, deployed, "SELECT SUBSTRING_INDEX(executor_user,'@',1) FROM nerocd_external_import_proof WHERE id=1") != expectedUser {
+	if expectedUser == "" || expectedUser == "root" || wordpressRuntimeExternalSQL(t, deployed, "SELECT SUBSTRING_INDEX(executor_user,'@',1) FROM "+table+" WHERE id=1") != expectedUser {
 		t.Fatal("external SQL did not execute as the intended target application database account")
 	}
-	if wordpressRuntimeExternalSQL(t, deployed, "SELECT marker FROM nerocd_external_import_proof WHERE id=1") != "gzip" || wordpressRuntimeExternalSQL(t, source, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='nerocd_external_import_proof'") != "0" {
+	if wordpressRuntimeExternalSQL(t, deployed, "SELECT marker FROM "+table+" WHERE id=1") != marker || wordpressRuntimeExternalSQL(t, source, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='"+table+"'") != "0" {
 		t.Fatal("external plain creation followed by gzip update did not stay on separate target")
 	}
 	for _, application := range []domain.HostingOperation{source, deployed} {

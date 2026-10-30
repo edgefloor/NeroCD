@@ -85,6 +85,15 @@ function selectMySQLRetentionSurvivor(resourceID, backups, executions, transfers
   }
   return undefined;
 }
+function wordpressLocalSQLSamples() {
+  const plain=Buffer.from("CREATE TABLE IF NOT EXISTS nerocd_local_file_import_proof(id INT PRIMARY KEY, marker VARCHAR(64), executor_user VARCHAR(128)); INSERT INTO nerocd_local_file_import_proof VALUES(1,'local_plain',CURRENT_USER()) ON DUPLICATE KEY UPDATE marker='local_plain';\n");
+  const compressed=Buffer.from('H4sIAAAAAAAA/woNcHEMcVXISy3KT06Jz8lPTsyJT8vMSY3PzC3ILyqJLyjKz09TCHYNUchNLMpOLbJVh6hJr8osUFcI93ANclXITLE1tOYCBAAA//+c0rUHSgAAAA==','base64');
+  return [
+    {name:'plain',key:'local.sql',compression:'plain',buffer:plain,kind:'upload'},
+    {name:'gzip',key:'display.data',compression:'gzip',buffer:compressed,kind:'upload'},
+    {name:'rejected',key:'broken.sql',compression:null,buffer:compressed.subarray(0,compressed.length-8),kind:'upload'},
+  ];
+}
 async function report(action, id) {
   const r = await api.post("/__catalog_fixture/report", {
     data: { action, id },
@@ -610,22 +619,50 @@ async function wordpressWorkflow(h, initial) {
   await restorePanel.getByRole('combobox',{name:'Database import source',exact:true}).selectOption('s3');
   await restorePanel.getByRole('combobox',{name:'Restore target application',exact:true}).selectOption(backupState.id);
   await restorePanel.getByRole('combobox',{name:'Restore target database component',exact:true}).selectOption('mysql');
-  const external=restorePanel.getByRole('region',{name:'External S3 database import',exact:true});
+  let external=restorePanel.getByRole('region',{name:'External S3 database import',exact:true});
   await external.getByRole('combobox',{name:'S3 import destination',exact:true}).selectOption(scheduleTarget.target_id+':'+scheduleTarget.revision);
   const stagePath='/api/v1/resources/'+backupState.id+'/database-import-stages';
   const externalImportPath='/api/v1/resources/'+backupState.id+'/database-imports';
   for(const sample of [
-    {name:'plain',key:'nerocd/operator-import/plain.sql',compression:'plain'},
-    {name:'gzip',key:'nerocd/operator-import/gzip.data',compression:'gzip'},
-    {name:'rejected',key:'nerocd/operator-import/broken.sql',compression:null},
+    {name:'plain',key:'nerocd/operator-import/plain.sql',compression:'plain',kind:'s3'},
+    {name:'gzip',key:'nerocd/operator-import/gzip.data',compression:'gzip',kind:'s3'},
+    {name:'rejected',key:'nerocd/operator-import/broken.sql',compression:null,kind:'s3'},
+    ...wordpressLocalSQLSamples(),
   ]){
-    step='wordpress_mysql_external_s3_'+sample.name+'_inspect';
-    await external.getByRole('textbox',{name:'S3 object key',exact:true}).fill(sample.key);
-    const inspectionPending=response(page,stagePath);
-    await external.getByRole('button',{name:'Inspect S3 object',exact:true}).click();
-    const inspectionResponse=await inspectionPending,inspectionInput=inspectionResponse.request().postDataJSON();
-    let inspected=await checkedResponse(inspectionResponse,202);
-    if(inspectionInput.component!=='mysql'||inspectionInput.expected_deployed_operation_id!==targetComponents.operation_id||inspectionInput.expected_resource_generation!==targetComponents.resource_generation||inspectionInput.s3_source.target_id!==scheduleTarget.target_id||inspectionInput.s3_source.revision!==scheduleTarget.revision||inspectionInput.s3_source.object_key!==sample.key||inspected.target_resource_id!==backupState.id||inspected.component!=='mysql'||inspected.expected_deployed_operation_id!==targetComponents.operation_id||inspected.s3_source.object_key!==sample.key)throw Error('WordPress external inspection authority changed');
+    const local=sample.kind==='upload',flagPrefix=local?'wordpress_mysql_local_file_':'wordpress_mysql_external_s3_';
+    step=flagPrefix+sample.name+'_inspect';
+    let inspected;
+    if(local){
+      if(sample.name==='plain'){
+        await restorePanel.getByRole('combobox',{name:'Database import source',exact:true}).selectOption('upload');
+        external=restorePanel.getByRole('region',{name:'Local SQL file import',exact:true});
+      }
+      await external.getByLabel('Local SQL file',{exact:true}).setInputFiles({name:sample.key,mimeType:'application/octet-stream',buffer:sample.buffer});
+      const uploadStagePath='/api/v1/resources/'+backupState.id+'/database-import-upload-stages';
+      const admissionPending=response(page,uploadStagePath);
+      await external.getByRole('button',{name:'Prepare local file upload',exact:true}).click();
+      const admittedResponse=await admissionPending,admittedInput=admittedResponse.request().postDataJSON();
+      inspected=await checkedResponse(admittedResponse,202);
+      if(admittedInput.component!=='mysql'||admittedInput.expected_deployed_operation_id!==targetComponents.operation_id||admittedInput.expected_resource_generation!==targetComponents.resource_generation||admittedInput.filename!==sample.key||admittedInput.source_bytes!==sample.buffer.length||inspected.version!=='mysql.compose-local-upload-stage.v1'||inspected.upload_source?.filename!==sample.key||inspected.upload_source?.bytes!==sample.buffer.length||!/^sha256:[a-f0-9]{64}$/.test(inspected.upload_hash)||Date.parse(inspected.upload_deadline)<=Date.now()||inspected.s3_source||inspected.source_identity)throw Error('WordPress local upload preparation changed file identity');
+      // Recovering metadata is an API replay; it never sends file content.
+      const admittedReplay=await checkedResponse(await context.request.post(uploadStagePath,{headers:{"X-NeroCD-CSRF":"1",Origin:origin},data:admittedInput}),202);
+      if(admittedReplay.id!==inspected.id||admittedReplay.upload_hash!==inspected.upload_hash)throw Error('WordPress local upload metadata replay created a different stage');
+      step=flagPrefix+sample.name+'_send';
+      const contentPath='/api/v1/database-import-stages/'+inspected.id+'/content';
+      const sentPending=page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===contentPath);
+      await external.getByRole('button',{name:'Send file for inspection',exact:true}).click();
+      const sentResponse=await sentPending,headers=await sentResponse.request().allHeaders();
+      if(headers['content-type']!=='application/octet-stream'||headers['x-nerocd-csrf']!=='1'||headers.origin!==origin||headers['if-match']!=='"'+inspected.upload_hash+'"')throw Error('WordPress local File upload lost content or cookie authority');
+      await checkedResponse(sentResponse,202);
+    }else{
+      await external.getByRole('textbox',{name:'S3 object key',exact:true}).fill(sample.key);
+      const inspectionPending=response(page,stagePath);
+      await external.getByRole('button',{name:'Inspect S3 object',exact:true}).click();
+      const inspectionResponse=await inspectionPending,inspectionInput=inspectionResponse.request().postDataJSON();
+      inspected=await checkedResponse(inspectionResponse,202);
+      if(inspectionInput.component!=='mysql'||inspectionInput.expected_deployed_operation_id!==targetComponents.operation_id||inspectionInput.expected_resource_generation!==targetComponents.resource_generation||inspectionInput.s3_source.target_id!==scheduleTarget.target_id||inspectionInput.s3_source.revision!==scheduleTarget.revision||inspectionInput.s3_source.object_key!==sample.key||inspected.s3_source.object_key!==sample.key)throw Error('WordPress external inspection authority changed');
+    }
+    if(inspected.target_resource_id!==backupState.id||inspected.component!=='mysql'||inspected.expected_deployed_operation_id!==targetComponents.operation_id)throw Error('WordPress inspection target authority changed');
     const stageID=inspected.id;
     await expect.poll(async()=>{
       inspected=await checkedResponse(await context.request.get('/api/v1/database-import-stages/'+stageID),200);
@@ -636,16 +673,16 @@ async function wordpressWorkflow(h, initial) {
       await expect(external).toContainText('Inspection '+stageID+' · failed');
       await expect(external.getByRole('checkbox',{name:'Replace target database with this inspected SQL and interrupt its writers',exact:true})).toBeDisabled();
       await expect(external.getByRole('button',{name:'Import inspected SQL',exact:true})).toBeDisabled();
-      safe.wordpress_mysql_external_s3_inspection_rejected=true;
+      safe[flagPrefix+'inspection_rejected']=true;
       continue;
     }
-    if(inspected.state!=='ready'||inspected.version!=='mysql.compose-external-s3-stage.v1'||inspected.compression!==sample.compression||!Number.isSafeInteger(inspected.source_bytes)||inspected.source_bytes<1||inspected.source_bytes>10737418240||inspected.staged_blob?.format!=='mysql_sql'||!Number.isSafeInteger(inspected.staged_blob.bytes)||inspected.staged_blob.bytes<1||inspected.staged_blob.bytes>10737418240||!/^sha256:[a-f0-9]{64}$/.test(inspected.staged_blob.digest)||!/^sha256:[a-f0-9]{64}$/.test(inspected.stage_hash)||Date.parse(inspected.expires_at)<=Date.now())throw Error('WordPress external inspection receipt changed');
+    if(inspected.state!=='ready'||inspected.version!==(local?'mysql.compose-local-upload-stage.v1':'mysql.compose-external-s3-stage.v1')||inspected.compression!==sample.compression||!Number.isSafeInteger(inspected.source_bytes)||inspected.source_bytes<1||inspected.source_bytes>10737418240||inspected.staged_blob?.format!=='mysql_sql'||!Number.isSafeInteger(inspected.staged_blob.bytes)||inspected.staged_blob.bytes<1||inspected.staged_blob.bytes>10737418240||!/^sha256:[a-f0-9]{64}$/.test(inspected.staged_blob.digest)||!/^sha256:[a-f0-9]{64}$/.test(inspected.stage_hash)||Date.parse(inspected.expires_at)<=Date.now())throw Error('WordPress external inspection receipt changed');
     const receipt=external.getByRole('region',{name:'Inspected SQL object',exact:true});
     await expect(receipt).toContainText(inspected.stage_hash);
     await expect(receipt).toContainText(inspected.staged_blob.digest);
     await expect(receipt).toContainText(sample.key);
     for(const width of [320,390,430,1280]){await page.setViewportSize({width,height:900});await expect(receipt).toBeVisible();if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('WordPress external SQL import controls responsive overflow');}
-    step='wordpress_mysql_external_s3_'+sample.name+'_import';
+    step=flagPrefix+sample.name+'_import';
     await external.getByRole('checkbox',{name:'Replace target database with this inspected SQL and interrupt its writers',exact:true}).check();
     const externalImportPending=response(page,externalImportPath);
     await external.getByRole('button',{name:'Import inspected SQL',exact:true}).click();
@@ -663,8 +700,7 @@ async function wordpressWorkflow(h, initial) {
     },{timeout:60000,intervals:[100,500,1000]}).toBe(true);
     if(externalImported.version!=='mysql.compose-external-import.v1'||externalImported.state!=='succeeded'||externalImported.ownership_held||!externalImported.writers_resumed)throw Error('WordPress external import did not settle with writers resumed');
     await expect(external).toContainText('External import '+externalImportID+' · succeeded');
-    if(sample.name==='plain')safe.wordpress_mysql_external_s3_plain_import=true;
-    else safe.wordpress_mysql_external_s3_gzip_import=true;
+    safe[flagPrefix+sample.name+'_import']=true;
   }
   await checkWordPress('external_mysql_import');
   await report('database_checked',postID);

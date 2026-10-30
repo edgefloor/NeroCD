@@ -1500,6 +1500,57 @@ func main() {
         for value in values:
             self.assertIn("key:'" + value["Key"] + "'", browser)
 
+    def test_wordpress_local_file_samples_match_real_browser_files_and_magic(self):
+        source = Path("internal/api/hosting_catalog_wordpress_runtime_integration_test.go").read_text()
+        samples = "type wordpressRuntimeExternalSQLSample struct" + source.split("type wordpressRuntimeExternalSQLSample struct", 1)[1].split("func wordpressRuntimeExternalSQL(t", 1)[0]
+        program = 'package main\nimport ("bytes";"compress/gzip";"encoding/json";"os")\n' + samples + '\nfunc main(){if err:=json.NewEncoder(os.Stdout).Encode(wordpressRuntimeLocalSQLSamples());err!=nil{panic(err)}}'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "local_samples.go"
+            path.write_text(program)
+            run = subprocess.run(["go", "run", str(path)], capture_output=True, text=True, check=True, timeout=30)
+        values = json.loads(run.stdout)
+        browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
+        helper = "function wordpressLocalSQLSamples()" + browser.split("function wordpressLocalSQLSamples()", 1)[1].split("async function report", 1)[0]
+        script = helper + "console.log(JSON.stringify(wordpressLocalSQLSamples().map(s=>({key:s.key,compression:s.compression,encoded:s.buffer.toString('base64')}))));"
+        actual = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True, timeout=5).stdout)
+        self.assertEqual([v["Key"] for v in values], ["local.sql", "display.data", "broken.sql"])
+        for expected, observed in zip(values, actual):
+            self.assertEqual(observed["key"], expected["Key"])
+            self.assertEqual(observed["encoded"], expected["Encoded"])
+        plain, compressed, broken = [base64.b64decode(v["Encoded"]) for v in values]
+        sql = base64.b64decode(values[1]["SQL"])
+        self.assertIn(b"VALUES(1,'local_plain',CURRENT_USER())", plain)
+        self.assertIn(b"executor_user VARCHAR(128)", plain)
+        self.assertEqual(gzip.decompress(compressed), sql)
+        self.assertEqual(sql, b"UPDATE nerocd_local_file_import_proof SET marker='local_gzip' WHERE id=1;\n")
+        self.assertNotIn(b"executor_user", sql)
+        self.assertFalse(values[1]["Key"].endswith(".gz"))
+        self.assertEqual(broken, compressed[:-8])
+        with self.assertRaises((EOFError, gzip.BadGzipFile)):
+            gzip.decompress(broken)
+        self.assertIn("setInputFiles({name:sample.key,mimeType:'application/octet-stream',buffer:sample.buffer})", browser)
+        self.assertIn("sentPending=page.waitForResponse(r=>r.request().method()==='PUT'", browser)
+        self.assertLess(browser.index("const sentPending="), browser.index("name:'Send file for inspection'"))
+        self.assertIn("body->>'version'=$2", source)
+        self.assertIn("s.body->>'version'=$2", source)
+
+    def test_wordpress_local_metadata_replay_keeps_exact_cookie_request(self):
+        browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
+        replay = browser.split("      const admittedReplay=", 1)[1].split("\n", 1)[0]
+        script = """
+const origin='https://127.0.0.1:25443';
+const uploadStagePath='/api/v1/resources/target/database-import-upload-stages';
+const admittedInput={request_id:'request',component:'mysql',expected_deployed_operation_id:'deployment',expected_resource_generation:1,filename:'display.data',source_bytes:42};
+const context={request:{post:async(path,options)=>({path,...options})}};
+const checkedResponse=async(value,status)=>({request:await value,status});
+(async()=>{const replay=""" + replay + "console.log(JSON.stringify({replay,admittedInput}));})();"
+        result = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True, timeout=5).stdout)
+        self.assertEqual(result["replay"]["status"], 202)
+        request = result["replay"]["request"]
+        self.assertEqual(request["path"], "/api/v1/resources/target/database-import-upload-stages")
+        self.assertEqual(request["data"], result["admittedInput"])
+        self.assertEqual(request["headers"], {"X-NeroCD-CSRF":"1", "Origin":"https://127.0.0.1:25443"})
+
     def test_wordpress_external_import_replay_keeps_exact_body_and_cookie_headers(self):
         browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
         replay = browser.split("    const externalReplay=", 1)[1].split("\n", 1)[0]
@@ -1619,7 +1670,7 @@ func main() {
     def test_wordpress_external_import_uses_explicit_typed_runner_opt_in(self):
         fixture = Path("internal/api/hosting_storage_runtime_integration_test.go").read_text()
         capabilities = fixture.split('if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {', 1)[1].split("\n\t\t\t\t}", 1)[0]
-        for capability in ["domain.RunTypeDatabaseImportStage", "domain.HostingDatabaseImportStageCapability", "domain.RunTypeDatabaseImport", "domain.HostingDatabaseImportCapability"]:
+        for capability in ["domain.RunTypeDatabaseImportStage", "domain.HostingDatabaseImportStageCapability", "domain.RunTypeDatabaseImport", "domain.HostingDatabaseImportCapability", "domain.HostingDatabaseImportUploadCapability"]:
             self.assertIn(capability, capabilities)
         self.assertIn('"--hosting-database-external-imports"', fixture)
         cli = Path("cmd/nerocd/runner.go").read_text()
@@ -1713,9 +1764,9 @@ console.log(JSON.stringify({status:safe.checked_response_status,sent}));
         validator = source.split("<<'COMPOSE_BROWSER_PASS'\n",1)[1].split("\nCOMPOSE_BROWSER_PASS",1)[0]
         healthy=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved"]
         for mysql in [False,True]:
-            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held","wordpress_mysql_database_schedule_due","wordpress_mysql_database_schedule_retry","wordpress_mysql_database_schedule_edit_disable","wordpress_mysql_database_schedule_history","wordpress_mysql_database_remote_backup","wordpress_mysql_database_remote_failure_local_success","wordpress_mysql_database_remote_same_archive_retry","wordpress_mysql_database_remote_schedule_same_archive_retry","wordpress_mysql_database_remote_backup_import","wordpress_mysql_database_retention_automatic","wordpress_mysql_database_retention_survivor_import","wordpress_mysql_database_retention_manual_retry","wordpress_mysql_external_s3_plain_import","wordpress_mysql_external_s3_gzip_import","wordpress_mysql_external_s3_inspection_rejected"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
+            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held","wordpress_mysql_database_schedule_due","wordpress_mysql_database_schedule_retry","wordpress_mysql_database_schedule_edit_disable","wordpress_mysql_database_schedule_history","wordpress_mysql_database_remote_backup","wordpress_mysql_database_remote_failure_local_success","wordpress_mysql_database_remote_same_archive_retry","wordpress_mysql_database_remote_schedule_same_archive_retry","wordpress_mysql_database_remote_backup_import","wordpress_mysql_database_retention_automatic","wordpress_mysql_database_retention_survivor_import","wordpress_mysql_database_retention_manual_retry","wordpress_mysql_external_s3_plain_import","wordpress_mysql_external_s3_gzip_import","wordpress_mysql_external_s3_inspection_rejected","wordpress_mysql_local_file_plain_import","wordpress_mysql_local_file_gzip_import","wordpress_mysql_local_file_inspection_rejected"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
             test="TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS" if mysql else "TestHostingCatalogWordPressCompiledRunnerHTTPS"
-            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS","COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_AUTOMATIC_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_MANUAL_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_SURVIVOR_PASS","COMPOSE_MYSQL_EXTERNAL_S3_IMPORT_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
+            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS","COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_AUTOMATIC_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_MANUAL_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_SURVIVOR_PASS","COMPOSE_MYSQL_EXTERNAL_S3_IMPORT_PASS","COMPOSE_MYSQL_LOCAL_FILE_IMPORT_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
             for kind in ["valid","missing","false","numeric","intercepted","skip","wrong_test","missing_marker","other_mode"]:
                 with self.subTest(mysql=mysql,kind=kind),tempfile.TemporaryDirectory() as tmp:
                     root=Path(tmp)

@@ -311,7 +311,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 				caps = append(caps, "hosting_compose_mysql_backup_v1")
 				if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {
 					caps = append(caps, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability, domain.HostingDatabaseMySQLRemoteRestoreCapability, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseMySQLBackupRetentionCapability)
-					caps = append(caps, domain.RunTypeDatabaseImportStage, domain.HostingDatabaseImportStageCapability, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportCapability)
+					caps = append(caps, domain.RunTypeDatabaseImportStage, domain.HostingDatabaseImportStageCapability, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportCapability, domain.HostingDatabaseImportUploadCapability)
 				}
 			}
 		}
