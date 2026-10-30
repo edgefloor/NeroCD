@@ -366,6 +366,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/database-import-stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inspect external S3 SQL or consume one confirmed immutable MySQL stage
+         * @description Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.
+         */
+        post: operations["requestHostingDatabaseImportStage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-import-stages/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inspect external S3 SQL or consume one confirmed immutable MySQL stage
+         * @description Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.
+         */
+        get: operations["getHostingDatabaseImportStage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inspect external S3 SQL or consume one confirmed immutable MySQL stage
+         * @description Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.
+         */
+        post: operations["requestHostingDatabaseImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-imports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inspect external S3 SQL or consume one confirmed immutable MySQL stage
+         * @description Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.
+         */
+        get: operations["getHostingDatabaseImport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/database-backups": {
         parameters: {
             query?: never;
@@ -5502,6 +5582,90 @@ export interface components {
             remote_source?: components["schemas"]["BackupRemoteSource"];
             component_target?: components["schemas"]["HostingDatabaseBackupComponentTarget"];
         } & (unknown | unknown);
+        HostingDatabaseImportS3Source: {
+            target_id: string;
+            /** Format: int64 */
+            revision: number;
+            /** @description Exact key within the configured S3 destination bucket; never a URL or caller endpoint. */
+            object_key: string;
+        };
+        HostingDatabaseImportSourceIdentity: {
+            version_id?: string;
+            etag?: string;
+        };
+        HostingDatabaseImportBlob: {
+            digest: string;
+            /** Format: int64 */
+            bytes: number;
+            /** @enum {string} */
+            format: "mysql_sql";
+        };
+        HostingDatabaseImportStageInput: {
+            request_id: string;
+            /** @enum {string} */
+            component: "mysql";
+            expected_deployed_operation_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
+            s3_source: components["schemas"]["HostingDatabaseImportS3Source"];
+        };
+        /** @description Immutable inspection stage for external SQL, bound to the intended Compose target and runner daemon. Ready receipts include actual source identity/size, verified decoded SQL digest/size, expiry and stage_hash. Ready TTL is one hour. Encoded and decoded bytes are each bounded to 10 GiB. Replays never refetch. Inspection never stops target writers. */
+        HostingDatabaseImportStage: {
+            id: string;
+            /** @enum {string} */
+            version: "mysql.compose-external-s3-stage.v1";
+            target_resource_id: string;
+            /** @enum {string} */
+            component: "mysql";
+            expected_deployed_operation_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
+            s3_source: components["schemas"]["HostingDatabaseImportS3Source"];
+            /** @enum {string} */
+            state: "queued" | "running" | "ready" | "failed" | "expired" | "consumed";
+            /** @enum {string} */
+            failure_code?: "access_denied" | "authority_denied" | "network_denied" | "remote_unavailable" | "object_mismatch" | "unsupported_format" | "too_large" | "stage_unavailable" | "stage_expired" | "execution_failed" | "interrupted";
+            source_identity?: components["schemas"]["HostingDatabaseImportSourceIdentity"];
+            /** Format: int64 */
+            source_bytes?: number;
+            /** @enum {string} */
+            compression?: "plain" | "gzip";
+            staged_blob?: components["schemas"]["HostingDatabaseImportBlob"];
+            stage_hash?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        HostingDatabaseImportInput: {
+            request_id: string;
+            stage_id: string;
+            expected_stage_hash: string;
+            component_target: components["schemas"]["HostingDatabaseBackupComponentTarget"];
+        };
+        /** @description One confirmed consumption of the exact immutable stage, using the target application database account. Same-request replay returns the original operation after authorization. Missing/replaced/expired input requires fresh inspection; no silent download or SQL replay. Partial or unjoined SQL remains uncertain with target ownership held. */
+        HostingDatabaseImportOperation: {
+            id: string;
+            /** @enum {string} */
+            version: "mysql.compose-external-import.v1";
+            stage_id: string;
+            target_resource_id: string;
+            /** @enum {string} */
+            target_component: "mysql";
+            target_deployed_operation_id: string;
+            /** @enum {string} */
+            state: "queued" | "running" | "succeeded" | "failed" | "uncertain";
+            ownership_held: boolean;
+            writers_resumed: boolean;
+            /** @enum {string} */
+            failure_code?: "access_denied" | "authority_denied" | "network_denied" | "remote_unavailable" | "object_mismatch" | "unsupported_format" | "too_large" | "stage_unavailable" | "stage_expired" | "execution_failed" | "interrupted";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         HostingDatabaseBackupBlob: {
             digest: string;
             bytes: number;
@@ -12062,6 +12226,298 @@ export interface operations {
                 content?: never;
             };
             /** @description Request rejected or unavailable; never assume effects did not occur */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    requestHostingDatabaseImportStage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseImportStageInput"];
+            };
+        };
+        responses: {
+            /** @description Authorized immutable staging or import operation state */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportStage"];
+                };
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getHostingDatabaseImportStage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized immutable staging or import operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportStage"];
+                };
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    requestHostingDatabaseImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseImportInput"];
+            };
+        };
+        responses: {
+            /** @description Authorized immutable staging or import operation state */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportOperation"];
+                };
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getHostingDatabaseImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized immutable staging or import operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportOperation"];
+                };
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rejected or unavailable. An uncertain import is never silently retried. */
             503: {
                 headers: {
                     [name: string]: unknown;

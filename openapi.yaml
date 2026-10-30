@@ -1366,6 +1366,254 @@ paths:
         ]
       }
     }
+  /api/v1/resources/{id}/database-import-stages:
+    {
+      "post": {
+        "operationId": "requestHostingDatabaseImportStage",
+        "summary": "Inspect external S3 SQL or consume one confirmed immutable MySQL stage",
+        "description": "Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Authorized immutable staging or import operation state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseImportStage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "401": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "403": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "404": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "409": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "500": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "503": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseImportStageInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/database-import-stages/{id}:
+    {
+      "get": {
+        "operationId": "getHostingDatabaseImportStage",
+        "summary": "Inspect external S3 SQL or consume one confirmed immutable MySQL stage",
+        "description": "Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized immutable staging or import operation state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseImportStage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "401": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "403": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "404": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "409": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "500": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "503": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          }
+        }
+      }
+    }
+  /api/v1/resources/{id}/database-imports:
+    {
+      "post": {
+        "operationId": "requestHostingDatabaseImport",
+        "summary": "Inspect external S3 SQL or consume one confirmed immutable MySQL stage",
+        "description": "Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Authorized immutable staging or import operation state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseImportOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "401": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "403": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "404": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "409": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "500": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "503": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseImportInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/database-imports/{id}:
+    {
+      "get": {
+        "operationId": "getHostingDatabaseImport",
+        "summary": "Inspect external S3 SQL or consume one confirmed immutable MySQL stage",
+        "description": "Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized immutable staging or import operation state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseImportOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "401": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "403": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "404": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "409": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "500": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          },
+          "503": {
+            "description": "Rejected or unavailable. An uncertain import is never silently retried."
+          }
+        }
+      }
+    }
   /api/v1/resources/{id}/database-backups:
     {
       "get": {
@@ -11120,6 +11368,346 @@ components:
             }
           }
         ]
+      }
+    HostingDatabaseImportS3Source:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_id",
+          "revision",
+          "object_key"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "object_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Exact key within the configured S3 destination bucket; never a URL or caller endpoint."
+          }
+        }
+      }
+    HostingDatabaseImportSourceIdentity:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "version_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "etag": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        }
+      }
+    HostingDatabaseImportBlob:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "digest",
+          "bytes",
+          "format"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 10737418240
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "mysql_sql"
+            ]
+          }
+        }
+      }
+    HostingDatabaseImportStageInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "component",
+          "expected_deployed_operation_id",
+          "expected_resource_generation",
+          "s3_source"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "component": {
+            "type": "string",
+            "enum": [
+              "mysql"
+            ]
+          },
+          "expected_deployed_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_resource_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "s3_source": {
+            "$ref": "#/components/schemas/HostingDatabaseImportS3Source"
+          }
+        }
+      }
+    HostingDatabaseImportStage:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "target_resource_id",
+          "component",
+          "expected_deployed_operation_id",
+          "expected_resource_generation",
+          "s3_source",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "mysql.compose-external-s3-stage.v1"
+            ]
+          },
+          "target_resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "component": {
+            "type": "string",
+            "enum": [
+              "mysql"
+            ]
+          },
+          "expected_deployed_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_resource_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "s3_source": {
+            "$ref": "#/components/schemas/HostingDatabaseImportS3Source"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "ready",
+              "failed",
+              "expired",
+              "consumed"
+            ]
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "access_denied",
+              "authority_denied",
+              "network_denied",
+              "remote_unavailable",
+              "object_mismatch",
+              "unsupported_format",
+              "too_large",
+              "stage_unavailable",
+              "stage_expired",
+              "execution_failed",
+              "interrupted"
+            ]
+          },
+          "source_identity": {
+            "$ref": "#/components/schemas/HostingDatabaseImportSourceIdentity"
+          },
+          "source_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 10737418240
+          },
+          "compression": {
+            "type": "string",
+            "enum": [
+              "plain",
+              "gzip"
+            ]
+          },
+          "staged_blob": {
+            "$ref": "#/components/schemas/HostingDatabaseImportBlob"
+          },
+          "stage_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Immutable inspection stage for external SQL, bound to the intended Compose target and runner daemon. Ready receipts include actual source identity/size, verified decoded SQL digest/size, expiry and stage_hash. Ready TTL is one hour. Encoded and decoded bytes are each bounded to 10 GiB. Replays never refetch. Inspection never stops target writers."
+      }
+    HostingDatabaseImportInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "stage_id",
+          "expected_stage_hash",
+          "component_target"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "stage_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_stage_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "component_target": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupComponentTarget"
+          }
+        }
+      }
+    HostingDatabaseImportOperation:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "stage_id",
+          "target_resource_id",
+          "target_component",
+          "target_deployed_operation_id",
+          "state",
+          "ownership_held",
+          "writers_resumed",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "mysql.compose-external-import.v1"
+            ]
+          },
+          "stage_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "target_resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "target_component": {
+            "type": "string",
+            "enum": [
+              "mysql"
+            ]
+          },
+          "target_deployed_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "ownership_held": {
+            "type": "boolean"
+          },
+          "writers_resumed": {
+            "type": "boolean"
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "access_denied",
+              "authority_denied",
+              "network_denied",
+              "remote_unavailable",
+              "object_mismatch",
+              "unsupported_format",
+              "too_large",
+              "stage_unavailable",
+              "stage_expired",
+              "execution_failed",
+              "interrupted"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "One confirmed consumption of the exact immutable stage, using the target application database account. Same-request replay returns the original operation after authorization. Missing/replaced/expired input requires fresh inspection; no silent download or SQL replay. Partial or unjoined SQL remains uncertain with target ownership held."
       }
     HostingDatabaseBackupBlob:
       {
