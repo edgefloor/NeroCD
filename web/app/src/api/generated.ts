@@ -4,6 +4,56 @@
  */
 
 export interface paths {
+    "/api/v1/resources/{id}/database-import-upload-stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Idempotent metadata admission, no bytes or SQL. upload_hash binds immutable stage/target/metadata/deadline. Exact authorized replay returns original ID without opening a body. */
+        post: operations["requestDatabaseImportUploadStage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-import-stages/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description One body attempt before upload_deadline, exact encoded byte count <=10GiB, independent decoded cap. Current owner/CSRF/Origin/hash checked before reading; no chunk resume. Duplicate attempts return409/current stage without forwarding bytes; GET resolves ambiguity. */
+        put: operations["uploadDatabaseImportStageContent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-import-stage/upload-stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["streamDatabaseImportUploadToRunner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting/database-import-stage/cleanup": {
         parameters: {
             query?: never;
@@ -5243,6 +5293,76 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingDatabaseImportUploadSource: {
+            /** @description 1–255 UTF-8 bytes without controls or slash/backslash; display only, never a path. */
+            filename: string;
+            /** Format: int64 */
+            bytes: number;
+        };
+        HostingDatabaseImportUploadInput: {
+            request_id: string;
+            /** @enum {string} */
+            component: "mysql";
+            expected_deployed_operation_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** @description 1–255 UTF-8 bytes without controls or slash/backslash; display only, never a path. */
+            filename: string;
+            /** Format: int64 */
+            source_bytes: number;
+        };
+        /** @description Immutable inspection stage for external SQL, bound to the intended Compose target and runner daemon. Ready receipts include actual source identity/size, verified decoded SQL digest/size, expiry and stage_hash. Ready TTL is one hour. Encoded and decoded bytes are each bounded to 10 GiB. Replays never refetch. Inspection never stops target writers. */
+        HostingDatabaseImportUploadStage: {
+            id: string;
+            /** @enum {string} */
+            version: "mysql.compose-local-upload-stage.v1";
+            target_resource_id: string;
+            /** @enum {string} */
+            component: "mysql";
+            expected_deployed_operation_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** @enum {string} */
+            state: "queued" | "running" | "ready" | "failed" | "expired" | "consumed";
+            /** @enum {string} */
+            failure_code?: "access_denied" | "authority_denied" | "network_denied" | "remote_unavailable" | "object_mismatch" | "unsupported_format" | "too_large" | "stage_unavailable" | "stage_expired" | "execution_failed" | "interrupted";
+            /** Format: int64 */
+            source_bytes?: number;
+            /** @enum {string} */
+            compression?: "plain" | "gzip";
+            staged_blob?: components["schemas"]["HostingDatabaseImportBlob"];
+            stage_hash?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            upload_source: components["schemas"]["HostingDatabaseImportUploadSource"];
+            upload_hash: string;
+            /** Format: date-time */
+            upload_deadline: string;
+        };
+        HostingDatabaseImportUploadStream: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            plan_hash: string;
+        };
+        HostingDatabaseImportUploadStagePlan: {
+            stage: components["schemas"]["HostingDatabaseImportUploadStage"];
+            actor_id: string;
+            project_id: string;
+            runner_id: string;
+            target: components["schemas"]["HostingHealthy"];
+            target_plan: components["schemas"]["HostingApplyPlan"];
+            /** @enum {integer} */
+            max_bytes: 10737418240;
+            timeout_seconds: number;
+            hash: string;
+        };
         HostingDatabaseImportStageCleanup: {
             stage_id: string;
             plan_hash: string;
@@ -5289,7 +5409,7 @@ export interface components {
         };
         HostingDatabaseImportPlan: {
             operation: components["schemas"]["HostingDatabaseImportOperation"];
-            stage_plan: components["schemas"]["HostingDatabaseImportStagePlan"];
+            stage_plan: components["schemas"]["HostingDatabaseImportStagePlan"] | components["schemas"]["HostingDatabaseImportUploadStagePlan"];
             receipt: components["schemas"]["HostingDatabaseImportReadyReceipt"];
             hash: string;
         };
@@ -5310,7 +5430,7 @@ export interface components {
             writers_resumed: boolean;
         };
         HostingDatabaseImportReceiptResult: {
-            stage?: components["schemas"]["HostingDatabaseImportStage"];
+            stage?: components["schemas"]["HostingDatabaseImportStage"] | components["schemas"]["HostingDatabaseImportUploadStage"];
             import?: components["schemas"]["HostingDatabaseImportOperation"];
         };
         /** @description Write-only whole configuration, encrypted at rest. Webhook uses only webhook_url; email requires SMTP host/port/security/from and current project member IDs. Username and password must both be supplied or both omitted. No read API returns configuration. */
@@ -11085,6 +11205,116 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    requestDatabaseImportUploadStage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseImportUploadInput"];
+            };
+        };
+        responses: {
+            /** @description Current stage; ready alone confirms completed verified bytes */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportUploadStage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    uploadDatabaseImportStageContent: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Current stage; ready alone confirms completed verified bytes */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportUploadStage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description Body already attempted; current stage, never retry authority */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportUploadStage"];
+                };
+            };
+            413: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    streamDatabaseImportUploadToRunner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseImportUploadStream"];
+            };
+        };
+        responses: {
+            /** @description Exact once-claimed browser stream, current fenced runner authority */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     authorizeDatabaseImportStageCleanup: {
         parameters: {
             query?: never;
@@ -11134,7 +11364,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HostingDatabaseImportStagePlan"];
+                    "application/json": components["schemas"]["HostingDatabaseImportStagePlan"] | components["schemas"]["HostingDatabaseImportUploadStagePlan"];
                 };
             };
             400: components["responses"]["Error"];
@@ -12678,7 +12908,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HostingDatabaseImportStage"];
+                    "application/json": components["schemas"]["HostingDatabaseImportStage"] | components["schemas"]["HostingDatabaseImportUploadStage"];
                 };
             };
             /** @description Rejected or unavailable. An uncertain import is never silently retried. */
