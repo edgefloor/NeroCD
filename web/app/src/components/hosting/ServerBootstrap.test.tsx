@@ -989,3 +989,14 @@ test("fresh project authorization cannot admit a denied lifetime's late response
     ])?.version,
   ).toBe(1);
 });
+
+
+test("empty SSH project choices offer an existing Projects action without a dead pager", async () => {
+  setup((url) => url.includes("/projects?") ? json(page([])) : undefined);
+  const link = await screen.findByRole("link", { name: "Open Projects" });
+  expect(link.getAttribute("href")).toBe("/projects");
+  expect(screen.getByText(/SSH setup requires project ownership/)).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Project for server onboarding" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Previous projects" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Next projects" })).toBeNull();
+});

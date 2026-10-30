@@ -94,6 +94,13 @@ function ProjectPicker({
   const selectedProject = projects.data?.items.find(
     (item) => item.id === project,
   );
+  const empty =
+    !projects.isPending &&
+    !projects.isError &&
+    !projects.isFetching &&
+    offset === 0 &&
+    projects.data?.total === 0 &&
+    projects.data.items.length === 0;
   return (
     <section
       aria-label="Add server over SSH"
@@ -101,33 +108,46 @@ function ProjectPicker({
     >
       <h3 className="font-semibold">Add server over SSH</h3>
       <p className="text-sm">
-        Install a runner on your host using a managed SSH key. Choose a project you own to begin.
+        Install a runner on your host using a managed SSH key. Choose a project
+        you own to begin.
       </p>
       {authorityPending ? (
         <p role="status">
           Current access is being checked. Onboarding actions are paused.
         </p>
       ) : null}
-      <label htmlFor={`${id}-project`}>Project for server onboarding</label>
-      <select
-        id={`${id}-project`}
-        className={selectClass}
-        value={project}
-        disabled={
-          requestHeld ||
-          authorityPending ||
-          projects.isError ||
-          projects.isPending
-        }
-        onChange={(event) => setProject(event.target.value)}
-      >
-        <option value="">Select project</option>
-        {projects.data?.items.map((item) => (
-          <option key={item.id} value={item.id}>
-            {item.name}
-          </option>
-        ))}
-      </select>
+      {empty ? (
+        <p>
+          No projects are available.{" "}
+          <a className="underline" href="/projects">
+            Open Projects
+          </a>{" "}
+          to create a project you own. SSH setup requires project ownership.
+        </p>
+      ) : (
+        <>
+          <label htmlFor={`${id}-project`}>Project for server onboarding</label>
+          <select
+            id={`${id}-project`}
+            className={selectClass}
+            value={project}
+            disabled={
+              requestHeld ||
+              authorityPending ||
+              projects.isError ||
+              projects.isPending
+            }
+            onChange={(event) => setProject(event.target.value)}
+          >
+            <option value="">Select project</option>
+            {projects.data?.items.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
       {projects.isError ? (
         <>
           <p role="alert">Unable to load projects.</p>
@@ -136,39 +156,41 @@ function ProjectPicker({
           </Button>
         </>
       ) : null}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          disabled={
-            requestHeld ||
-            authorityPending ||
-            offset === 0 ||
-            projects.isFetching
-          }
-          onClick={() => {
-            setProject("");
-            setOffset(Math.max(0, offset - 20));
-          }}
-        >
-          Previous projects
-        </Button>
-        <Button
-          variant="outline"
-          disabled={
-            requestHeld ||
-            authorityPending ||
-            !projects.data ||
-            offset + 20 >= projects.data.total ||
-            projects.isFetching
-          }
-          onClick={() => {
-            setProject("");
-            setOffset(offset + 20);
-          }}
-        >
-          Next projects
-        </Button>
-      </div>
+      {!empty && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            disabled={
+              requestHeld ||
+              authorityPending ||
+              offset === 0 ||
+              projects.isFetching
+            }
+            onClick={() => {
+              setProject("");
+              setOffset(Math.max(0, offset - 20));
+            }}
+          >
+            Previous projects
+          </Button>
+          <Button
+            variant="outline"
+            disabled={
+              requestHeld ||
+              authorityPending ||
+              !projects.data ||
+              offset + 20 >= projects.data.total ||
+              projects.isFetching
+            }
+            onClick={() => {
+              setProject("");
+              setOffset(offset + 20);
+            }}
+          >
+            Next projects
+          </Button>
+        </div>
+      )}
       {selectedProject ? (
         <ProjectBootstrap
           key={`${actor}:${project}`}
@@ -223,7 +245,9 @@ function ProjectBootstrap(props: {
   return (
     <div className="min-w-0 space-y-5">
       <p className="text-sm">
-        Prepare a Debian 12 arm64 host with systemd, Docker API 1.54 and Docker Compose before probing. This setup installs an image-hosting runner with readiness checks.
+        Prepare a Debian 12 arm64 host with systemd, Docker API 1.54 and Docker
+        Compose before probing. This setup installs an image-hosting runner with
+        readiness checks.
       </p>
       {options.data && !options.data.available ? (
         <p role="status">{unavailable[options.data.unavailable_reason]}</p>

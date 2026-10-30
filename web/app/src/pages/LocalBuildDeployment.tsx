@@ -1184,8 +1184,8 @@ function LocalDeploymentAcknowledgment(
       />
       <span>
         {compose
-          ? "I reviewed this exact successful Compose build, its service images, selected image access, generations, ports, readiness and selected HTTPS routes. I acknowledge interruption of all stack writers during deployment and retention of named volumes."
-          : "I reviewed this exact successful build and local artifact, generations, ports and readiness settings. I understand fixed-port replacement can interrupt service."}
+          ? "I reviewed this exact successful Compose build. Deployment interrupts all components. Named volumes and application data are kept."
+          : "I reviewed this exact successful build. Fixed-port replacement can interrupt service."}
       </span>
     </label>
   );

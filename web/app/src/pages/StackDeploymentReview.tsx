@@ -1,3 +1,4 @@
+import { HelpDetails } from "@/components/common/HelpDetails";
 import { ApiError } from "@/api/errors";
 import type { Resource } from "@/api/hosting";
 import { getCatalogInstallation } from "@/api/hosting-catalog";
@@ -627,23 +628,17 @@ function ReviewedStackDeployment(viewModel: ReviewedStackDeploymentModel) {
       aria-label="Reviewed Compose deployment"
     >
       <p>
-        Saved generation {review.input.expected_generation} · Compose generation{" "}
-        {review.options.stack_ref?.generation} · runtime generation{" "}
-        {review.input.expected_runtime_configuration_generation ?? 0}
-      </p>
-      <p>
-        Image access:{" "}
+        Deploy all saved components together using{" "}
         {review.input.registry_credential
-          ? `Registry credential ${review.input.registry_credential.secret_id}, version ${review.input.registry_credential.version}`
-          : "Public images"}
+          ? "the selected registry credential"
+          : "public images"}
         .
       </p>
-      <p>Compose hash: {review.options.stack_ref?.hash}</p>
       <p>
         Runtime configuration:{" "}
         {review.runtimeNames.length
           ? review.runtimeNames.join(", ")
-          : "No saved variables or managed secret references. Compose required values must be supplied before deployment."}
+          : "No saved variables or managed secret references."}
       </p>
       <p>
         Runner-local port{" "}
@@ -653,24 +648,46 @@ function ReviewedStackDeployment(viewModel: ReviewedStackDeploymentModel) {
         → {review.input.container_port}, readiness {review.input.readiness.path}
         .
       </p>
-      {review.options.stopped_operation_id ? (
-        <p>
-          Starts from recorded stop operation{" "}
-          {review.options.stopped_operation_id}.
-        </p>
-      ) : null}
-      {review.options.previous_healthy_operation_id ? (
-        <p>
-          Replaces healthy operation{" "}
-          {review.options.previous_healthy_operation_id}.
-        </p>
-      ) : null}
       {review.options.routes.map((route) => (
         <p key={route.id}>
           Keep HTTPS route {route.hostname}
-          {route.path_prefix} · version {route.version}.
+          {route.path_prefix}.
         </p>
       ))}
+      <p>
+        Replacement interrupts all components. Named volumes and application
+        data are kept.
+      </p>
+      <HelpDetails title="Deployment references">
+        <p>
+          Saved generation {review.input.expected_generation} · Compose
+          generation {review.options.stack_ref?.generation} · runtime generation{" "}
+          {review.input.expected_runtime_configuration_generation ?? 0}
+        </p>
+        <p>Compose hash: {review.options.stack_ref?.hash}</p>
+        {review.input.registry_credential && (
+          <p>
+            Registry credential {review.input.registry_credential.secret_id},
+            version {review.input.registry_credential.version}.
+          </p>
+        )}
+        {review.options.stopped_operation_id && (
+          <p>
+            Starts from stop operation {review.options.stopped_operation_id}.
+          </p>
+        )}
+        {review.options.previous_healthy_operation_id && (
+          <p>
+            Replaces healthy operation{" "}
+            {review.options.previous_healthy_operation_id}.
+          </p>
+        )}
+        {review.options.routes.map((route) => (
+          <p key={route.id}>
+            Route {route.id} · version {route.version}.
+          </p>
+        ))}
+      </HelpDetails>
       <StackDeploymentApproval {...viewModel} />
       <Button
         type="button"

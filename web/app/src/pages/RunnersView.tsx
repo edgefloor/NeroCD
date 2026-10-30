@@ -209,7 +209,7 @@ function RunnerInventory({
   }
   return (
     <section
-      className={`grid min-w-0 grid-cols-1 gap-4 ${canAdmin && showEnrollment ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}
+      className={`grid min-w-0 grid-cols-1 items-start gap-4 ${canAdmin && showEnrollment ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}
     >
       <Card className="min-w-0">
         <CardHeader>

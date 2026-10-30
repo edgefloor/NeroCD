@@ -656,6 +656,8 @@ test.each([false, true])("saved Compose captures runtime references and exact %s
   if (replacement) expect(screen.queryByLabelText("Readiness path")).toBeNull();
   else expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe("/");
   await reviewCompose();
+  expect(screen.getByText(/Compose hash:/).closest("details")?.open).toBe(false);
+  expect(screen.getByText(/Replacement interrupts all components/).closest("details")).toBeNull();
   expect(screen.getByRole("region", { name: "Reviewed Compose deployment" }).textContent).toContain(`readiness ${replacement ? "/ready" : "/"}.`);
   expect(screen.getByText(/TOKEN \(managed secret reference\)/)).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Retained releases" })).toBeNull();
@@ -777,7 +779,7 @@ test("Start reviews saved configuration and freezes the exact stopped reference"
   });
   setup("maintainer", [], false, compose);
   fireEvent.click(await screen.findByRole("button", { name: "Review current Compose start" }));
-  await screen.findByText(/Starts from recorded stop operation stop_one/);
+  await screen.findByText(/Starts from stop operation stop_one/);
   expect(screen.queryByLabelText("Readiness path")).toBeNull();
   expect(screen.getByRole("region", { name: "Reviewed Compose deployment" }).textContent).toContain("readiness /ready.");
   fireEvent.click(screen.getByLabelText(/I reviewed this saved Compose configuration/));
@@ -843,7 +845,7 @@ test.each(["initial", "replacement", "start"])("private Compose %s freezes the s
   await chooseComposeRegistry();
   expect(screen.getByText(/Images from other registries are pulled anonymously/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: mode === "start" ? "Review current Compose start" : "Review current Compose deployment" }));
-  await screen.findByText(/Image access: Registry credential credential, version 1/);
+  await screen.findByText(/Registry credential credential, version 1/);
   expect(screen.getByLabelText<HTMLSelectElement>("Registry credential version").disabled).toBe(true);
   fireEvent.click(screen.getByLabelText(/I reviewed this saved Compose configuration/));
   fireEvent.click(screen.getByRole("button", { name: mode === "start" ? "Start reviewed Compose" : "Deploy reviewed Compose" }));
