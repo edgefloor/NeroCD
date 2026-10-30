@@ -5,23 +5,24 @@ import { cn } from "@/lib/utils";
 
 const navigationIcons: Record<ViewKey, LucideIcon> = { home: Home, projects: Folder, runners: Server, deployments: Rocket, runs: Workflow, approvals: ShieldCheck, templates: LayoutTemplate, logs: ScrollText, audit: ClipboardList, operations: Activity, settings: Settings };
 
-export function NavButton({ item, active, onClick }: {
+export function NavButton({ item, active, onClick, iconOnly = false }: {
   item: NavigationItem;
   active: boolean;
   onClick: () => void;
+  iconOnly?: boolean;
 }): ReactNode {
   const Icon = navigationIcons[item.key];
   return (
-    <a href={item.to} aria-current={active ? "page" : undefined}
+    <a href={item.to} aria-label={iconOnly ? item.label : undefined} title={iconOnly ? item.label : undefined} aria-current={active ? "page" : undefined}
       className={cn("flex min-h-10 w-full items-center gap-2.5 rounded px-2 py-2 text-sm font-normal lg:min-h-8 lg:py-1.5 transition-colors hover:bg-sidebar-panel",
-        active ? "bg-sidebar-panel text-sidebar-foreground" : "text-sidebar-muted")}
+        active ? "bg-sidebar-panel text-sidebar-foreground" : "text-sidebar-muted", iconOnly && "justify-center px-0")}
       onClick={(event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         onClick();
       }}>
       <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
-      {item.label}
+      {!iconOnly && item.label}
     </a>
   );
 }

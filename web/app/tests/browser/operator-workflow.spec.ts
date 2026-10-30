@@ -343,6 +343,18 @@ test("settings cards contain controls and wrap long membership text on narrow sc
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: projectName, description: "settings layout fixture" });
   await page.reload({ waitUntil: "networkidle" });
   await page.getByRole("combobox").first().selectOption(project.id);
+  const role = page.getByLabel("Role", { exact: true });
+  await role.focus();
+  await role.press("Space");
+  await expect.poll(() => role.evaluate((element) => element.matches(":open"))).toBe(true);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(role).toHaveValue("maintainer");
+  await role.press("Space");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Escape");
+  await expect(role).toHaveValue("maintainer");
+  await role.selectOption("viewer");
   const response = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === "/api/v1/project-members" && candidate.request().method() === "POST");
   await page.getByRole("button", { name: "Update access" }).click();
   expect((await response).status()).toBe(200);
@@ -695,8 +707,12 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 844 });
   await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
-  await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Expand sidebar", exact: true })).toBeFocused();
+  await expect.poll(() => page.locator(".desktop-navigation-sidebar").evaluate((element) => element.getBoundingClientRect().width)).toBe(48);
+  const rail = page.getByRole("navigation", { name: "Desktop navigation" });
+  await expect(rail.getByRole("link", { name: "Projects", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(rail.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("title", "Settings");
   await expect(page.getByRole("button", { name: "Search navigation", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   for (const name of ["Account", "Notifications"]) {
@@ -712,6 +728,34 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
   await page.getByRole("button", { name: "Expand sidebar", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Collapse sidebar", exact: true })).toBeFocused();
+  await expect.poll(() => page.locator(".desktop-navigation-sidebar").evaluate((element) => element.getBoundingClientRect().width)).toBe(264);
+  const motion = await page.evaluate(async () => {
+    const sidebar = document.querySelector<HTMLElement>(".desktop-navigation-sidebar")!;
+    const workspace = document.querySelector<HTMLElement>(".shell-workspace")!;
+    const frames = [];
+    for (const label of ["Collapse sidebar", "Expand sidebar"]) {
+      document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click();
+      await new Promise(requestAnimationFrame);
+      const animations = [...sidebar.getAnimations(), ...workspace.getAnimations()];
+      animations.forEach((animation) => animation.pause());
+      frames.push([0, 200, 400].map((time) => {
+        animations.forEach((animation) => { animation.currentTime = time; });
+        return { width: sidebar.getBoundingClientRect().width, margin: workspace.getBoundingClientRect().left };
+      }));
+      animations.forEach((animation) => animation.finish());
+      await new Promise(requestAnimationFrame);
+    }
+    return frames;
+  });
+  for (const frames of motion) {
+    for (const frame of frames) expect(Math.abs(frame.width - frame.margin)).toBeLessThan(1);
+    expect(frames[1]!.width).toBeGreaterThan(48);
+    expect(frames[1]!.width).toBeLessThan(264);
+  }
+  expect(motion[0]![0]!.width).toBe(264);
+  expect(motion[0]![2]!.width).toBe(48);
+  expect(motion[1]![0]!.width).toBe(48);
+  expect(motion[1]![2]!.width).toBe(264);
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.locator(".mobile-bottom-navigation")).toHaveCount(0);

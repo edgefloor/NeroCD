@@ -292,8 +292,8 @@ button:disabled {
     max-width: calc(100vw - 16px);
     isolation: isolate;
     border-radius: 10px;
-    animation-duration: 180ms;
-    animation-timing-function: ease-out;
+    animation-duration: 400ms;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -346,7 +346,18 @@ input[type="password"] {
 }
 
 @media (min-width: 1024px) {
+  .desktop-navigation-sidebar {
+    width: 264px;
+    transition: width 400ms cubic-bezier(0.19, 1, 0.22, 1);
+  }
+
+  .desktop-navigation-sidebar[data-collapsed="true"] { width: 48px; }
+
+  .shell-workspace[data-sidebar-open="true"] { margin-left: 264px; }
+
   .shell-workspace {
+    margin-left: 48px;
+    transition: margin-left 400ms cubic-bezier(0.19, 1, 0.22, 1);
     min-height: calc(100vh - 1px);
     margin-top: 1px;
     margin-right: 1px;
@@ -417,4 +428,38 @@ input[type="password"] {
 
 @media (prefers-reduced-motion: reduce) {
   .mobile-navigation-drawer { animation-duration: 0ms; }
+  .desktop-navigation-sidebar,
+  .shell-workspace { transition: none; }
+}
+
+@supports (appearance: base-select) and selector(::picker(select)) {
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]),
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"])::picker(select) { appearance: base-select; }
+
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"])::picker-icon { display: none; }
+
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"])::picker(select) {
+    margin-block-start: 4px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--background);
+    color: var(--foreground);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 16%);
+  }
+
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option {
+    min-height: 32px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--foreground);
+    font-size: 14px;
+  }
+
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:hover,
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:focus-visible,
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:checked { background: var(--accent); }
+
+  select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:disabled { opacity: 0.5; }
 }
