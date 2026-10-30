@@ -283,18 +283,33 @@ button:disabled {
 @media (max-width: 1023px) {
   /* Keep the mobile drawer opaque and independently scrollable around cutouts. */
   .mobile-navigation-drawer {
-    width: min(15rem, 100vw);
-    max-width: 100vw;
+    top: 8px;
+    bottom: 8px;
+    left: 8px;
+    height: calc(100dvh - 16px);
+    width: min(15rem, calc(100vw - 16px));
+    max-width: calc(100vw - 16px);
+    isolation: isolate;
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(10, 10, 10, 0.24);
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
+    padding-top: max(4px, env(safe-area-inset-top));
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
+    padding-left: max(4px, env(safe-area-inset-left));
+    padding-right: 4px;
     background-color: var(--background);
   }
 
-  .dark .mobile-navigation-drawer {
-    background-color: var(--sidebar);
+  .mobile-navigation-drawer::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 4px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card);
+    pointer-events: none;
   }
 
   .mobile-shell-header {
@@ -356,4 +371,20 @@ input[type="password"] {
 
 .dark [data-slot="card"]:has(> [data-slot="card-header"]) > [data-slot="card-content"]:not(.p-0) {
   padding-top: var(--card-spacing);
+}
+
+/* A canvas frame separates the command surface from the overlay. */
+.command-dialog-frame {
+  padding: 4px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--background);
+  box-shadow: 0 16px 48px rgba(10, 10, 10, 0.24);
+}
+
+.command-dialog-frame > [data-slot="command"] {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
 }
