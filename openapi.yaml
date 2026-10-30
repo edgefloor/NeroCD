@@ -11392,7 +11392,7 @@ components:
             "type": "string",
             "minLength": 1,
             "maxLength": 1024,
-            "description": "Exact key within the configured S3 destination bucket; never a URL or caller endpoint."
+            "description": "Literal key within the configured S3 destination bucket, 1–1024 UTF-8 bytes without control characters. No trimming, URL decoding, slash normalization or endpoint interpretation. Provider IAM restrictions still apply."
           }
         }
       }
@@ -11400,6 +11400,7 @@ components:
       {
         "type": "object",
         "additionalProperties": false,
+        "minProperties": 1,
         "required": [],
         "properties": {
           "version_id": {

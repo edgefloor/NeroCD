@@ -5586,7 +5586,7 @@ export interface components {
             target_id: string;
             /** Format: int64 */
             revision: number;
-            /** @description Exact key within the configured S3 destination bucket; never a URL or caller endpoint. */
+            /** @description Literal key within the configured S3 destination bucket, 1–1024 UTF-8 bytes without control characters. No trimming, URL decoding, slash normalization or endpoint interpretation. Provider IAM restrictions still apply. */
             object_key: string;
         };
         HostingDatabaseImportSourceIdentity: {
