@@ -1184,7 +1184,7 @@ function LocalDeploymentAcknowledgment(
       />
       <span>
         {compose
-          ? "I reviewed this exact successful Compose build. Deployment interrupts all components. Named volumes and application data are kept."
+          ? "I reviewed this exact successful Compose build. Deployment interrupts all components. Data in named volumes is kept."
           : "I reviewed this exact successful build. Fixed-port replacement can interrupt service."}
       </span>
     </label>

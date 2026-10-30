@@ -655,8 +655,7 @@ function ReviewedStackDeployment(viewModel: ReviewedStackDeploymentModel) {
         </p>
       ))}
       <p>
-        Replacement interrupts all components. Named volumes and application
-        data are kept.
+        Replacement interrupts all components. Data in named volumes is kept.
       </p>
       <HelpDetails title="Deployment references">
         <p>
