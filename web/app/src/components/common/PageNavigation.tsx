@@ -43,6 +43,7 @@ export function PageNavigation({ page, label, loading = false, onFirst, onPrevio
   onPrevious: () => void;
   onNext: () => void;
 }): ReactNode {
+  if (!loading && page?.count === 0 && page.total === 0 && page.offset === 0) return null;
   const first = page && page.count > 0 ? page.offset + 1 : 0;
   const last = page && page.count > 0 ? page.offset + page.count : 0;
   return (

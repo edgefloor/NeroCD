@@ -15,7 +15,7 @@ interface EmptyStateProps {
 
 export function EmptyState({
   title = "No data yet",
-  description = "Nothing to show.",
+  description,
   icon: Icon = Box,
   action,
   children,
@@ -27,7 +27,7 @@ export function EmptyState({
       </div>
       <div className="space-y-1">
         <p className="text-sm font-medium text-foreground">{title}</p>
-        <p className="text-sm text-muted-foreground">{description}</p>
+        {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
       </div>
       {action ? (
         <Button 

@@ -50,3 +50,13 @@ test("the maximum supported offset disables forward navigation without blocking 
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Previous runs" }).disabled).toBe(false);
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "First runs page" }).disabled).toBe(false);
 });
+
+test("a settled empty first page hides navigation without hiding loading or offset recovery", () => {
+  const props = { page: { count: 0, limit: 50, offset: 0, total: 0 }, label: "runs", onFirst: vi.fn(), onPrevious: vi.fn(), onNext: vi.fn() };
+  const view = render(<PageNavigation {...props} />);
+  expect(screen.queryByRole("navigation")).toBeNull();
+  view.rerender(<PageNavigation {...props} loading />);
+  expect(screen.getByRole("navigation", { name: "runs pages" })).toBeTruthy();
+  view.rerender(<PageNavigation {...props} page={{ ...props.page, offset: 50 }} />);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Previous runs" }).disabled).toBe(false);
+});

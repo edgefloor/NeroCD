@@ -693,18 +693,40 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
   await page.goto("/projects");
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 844 });
+  await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Expand sidebar", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Search navigation", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  for (const name of ["Account", "Notifications"]) {
+    const trigger = page.getByRole("button", { name, exact: true });
+    await trigger.click();
+    await expect(page.getByRole("dialog", { name, exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+  }
+  await page.getByRole("button", { name: "Search navigation", exact: true }).click();
+  await expect(page.getByRole("combobox")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Expand sidebar", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Collapse sidebar", exact: true })).toBeFocused();
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.locator(".mobile-bottom-navigation")).toHaveCount(0);
     const menu = page.getByRole("button", { name: "Open mobile navigation" });
-    await expect(menu).toHaveText("Menu");
+    await expect(menu).toHaveAccessibleName("Open mobile navigation");
+    const menuBounds = await menu.boundingBox();
+    expect(menuBounds!.width).toBeGreaterThanOrEqual(44);
+    expect(menuBounds!.height).toBeGreaterThanOrEqual(44);
     await menu.click();
     const drawer = page.getByRole("dialog", { name: "Mobile navigation" });
     await expect(drawer).toBeVisible();
     await expect(drawer).toHaveAttribute("aria-modal", "true");
     await expect(drawer.getByRole("link", { name: "Projects", exact: true })).toHaveAttribute("aria-current", "page");
     await expect(drawer.getByRole("link")).toHaveCount(11);
-    await expect(drawer.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "Close navigation", exact: true })).toBeVisible();
     if (width === 390) await page.screenshot({ path: testInfo.outputPath("mobile-drawer-390.png") });
     for (let tab = 0; tab < 14; tab++) {
       await page.keyboard.press("Tab");
@@ -826,7 +848,18 @@ test("navigation search supports unmatched filters and resets between openings",
     await page.goto("/projects");
     await signIn(page);
     await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route(/\/api\/v1\/runs(?:\?|$)/, (route) => route.fulfill({ json: { items: [], count: 0, total: 0, limit: 50, offset: 0 } }));
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto("/runs");
+      await expect(page.getByText("No runs yet", { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => ({ height: document.documentElement.scrollHeight, viewport: document.documentElement.clientHeight, overflow: document.documentElement.scrollWidth > innerWidth }))).toEqual({ height: 844, viewport: 844, overflow: false });
+    }
+    await page.unroute(/\/api\/v1\/runs(?:\?|$)/);
+    await page.goto("/projects");
+    await expect(page.getByLabel("Notifications project", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 240 });
+    expect(await page.evaluate(() => document.documentElement.scrollHeight > document.documentElement.clientHeight)).toBe(true);
     const search = page.getByRole("button", { name: "Search navigation", exact: true });
     const backgroundBounds = () => page.locator("main").evaluate((element) => {
       const bounds = element.getBoundingClientRect();
@@ -837,6 +870,7 @@ test("navigation search supports unmatched filters and resets between openings",
     await search.click();
     await expect(page.getByRole("combobox")).toBeFocused();
     expect(await backgroundBounds()).toEqual(beforeSearch);
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("combobox").fill("zz-navigation-audit");
     await expect(page.getByRole("option", { name: 'Filter this page for "zz-navigation-audit"' })).toBeVisible();
     await page.getByRole("combobox").press("Enter");
@@ -2587,6 +2621,7 @@ test("session verification failures provide reload recovery without losing the r
 });
 
 test("short mobile menus keep lower navigation and Close usable", async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/operations");
   await signIn(page);
   await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
@@ -2599,10 +2634,11 @@ test("short mobile menus keep lower navigation and Close usable", async ({ page 
     const menu = page.getByRole("button", { name: "Open mobile navigation", exact: true });
     await menu.click();
     const drawer = page.getByRole("dialog", { name: "Mobile navigation", exact: true });
+    expect(await drawer.evaluate((element) => getComputedStyle(element).animationDuration)).toBe("0s");
     const settings = drawer.getByRole("link", { name: "Settings", exact: true });
     await settings.scrollIntoViewIfNeeded();
     await expect(settings).toBeInViewport();
-    const close = drawer.getByRole("button", { name: "Close", exact: true });
+    const close = drawer.getByRole("button", { name: "Close navigation", exact: true });
     await expect(close).toBeInViewport();
     expect(await drawer.getByRole("navigation").evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     const closeBounds = await close.boundingBox();

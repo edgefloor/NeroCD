@@ -178,7 +178,8 @@ html {
   background: var(--background);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-y: scroll;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* The root keeps its scrollbar during modal scroll lock, so Radix's body
@@ -189,7 +190,7 @@ html body[data-scroll-locked] {
 
 body {
   margin: 0;
-  min-width: 320px;
+  min-width: 0;
   min-height: 100vh;
   background: var(--background);
   color: var(--foreground);
@@ -269,6 +270,7 @@ button:disabled {
 
 /* Keep the fallback in its own rule so CSS optimization cannot discard it. */
 .mobile-app-shell {
+  display: flow-root;
   min-height: 100vh;
 }
 
@@ -290,6 +292,8 @@ button:disabled {
     max-width: calc(100vw - 16px);
     isolation: isolate;
     border-radius: 10px;
+    animation-duration: 180ms;
+    animation-timing-function: ease-out;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -361,6 +365,10 @@ input[type="password"] {
   text-underline-offset: 3px;
 }
 
+.dark [data-slot="card"]:has(> [data-slot="card-content"]) > [data-slot="card-header"].border-b {
+  border-bottom-width: 0;
+}
+
 .dark [data-slot="card"]:has(> [data-slot="card-header"]) > [data-slot="card-content"] {
   flex: 1 1 auto;
   margin: 0 4px 4px;
@@ -392,4 +400,21 @@ input[type="password"] {
 [data-slot="dialog-overlay"]:has(+ .mobile-navigation-drawer) {
   background: rgb(0 0 0 / 40%);
   backdrop-filter: blur(2px);
+}
+
+@keyframes mobile-navigation-in {
+  from { transform: translateX(calc(-100% - 8px)); }
+  to { transform: translateX(0); }
+}
+
+@keyframes mobile-navigation-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-100% - 8px)); }
+}
+
+.mobile-navigation-drawer[data-state="open"] { animation-name: mobile-navigation-in; }
+.mobile-navigation-drawer[data-state="closed"] { animation-name: mobile-navigation-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-navigation-drawer { animation-duration: 0ms; }
 }

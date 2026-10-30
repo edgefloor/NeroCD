@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { Bell, Search, UserRound } from "lucide-react";
+import { Bell, Menu, PanelLeftClose, PanelLeftOpen, Search, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import type { ApiSnapshot } from "@/api";
@@ -28,10 +28,14 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const collapseRef = useRef<HTMLButtonElement>(null);
+  const expandRef = useRef<HTMLButtonElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const dialogID = useId();
   const accountDialogID = `${dialogID}-account`;
   const notificationsDialogID = `${dialogID}-notifications`;
+  const sidebarID = `${dialogID}-sidebar`;
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const notificationsTriggerRef = useRef<HTMLButtonElement>(null);
   const contentRef = useRef<HTMLElement>(null);
@@ -82,9 +86,10 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
         contentRef.current?.focus();
         contentRef.current?.scrollIntoView({ block: "start" });
       }}>Skip to page content</a>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col bg-sidebar lg:flex">
+      <aside id={sidebarID} className={`fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col bg-sidebar ${sidebarOpen ? "lg:flex" : ""}`}>
         <div className="flex h-[42px] shrink-0 items-center gap-2.5 px-4">
           <img src="/logo.png" alt="" className="h-7 w-7 object-contain" /><strong className="text-base font-semibold tracking-tight">NeroCD</strong>
+          <Button ref={collapseRef} variant="ghost" size="icon-sm" className="ml-auto text-sidebar-muted" aria-label="Collapse sidebar" aria-expanded={sidebarOpen} aria-controls={sidebarID} onClick={() => { setSidebarOpen(false); requestAnimationFrame(() => expandRef.current?.focus()); }}><PanelLeftClose aria-hidden="true" className="size-4" /></Button>
         </div>
         <div className="px-2 pt-3"><Button variant="ghost" className="w-full justify-start gap-2 px-2 font-normal text-sidebar-muted" onClick={onOpenSearch} aria-label="Search navigation"><Search aria-hidden="true" className="h-4 w-4" />Search</Button></div>
         {navigation("Desktop navigation")}
@@ -93,26 +98,27 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
             <Button variant="ghost" className="min-w-0 flex-1 justify-start gap-2 px-2 font-normal text-sidebar-muted" aria-haspopup="dialog" aria-expanded={accountOpen} aria-controls={accountDialogID} onClick={(event) => { accountTriggerRef.current = event.currentTarget; setAccountOpen(true); }}><UserRound aria-hidden="true" className="h-4 w-4" />Account</Button>
             <Button variant="ghost" size="icon-sm" className="text-sidebar-muted" aria-label="Notifications" aria-haspopup="dialog" aria-expanded={notificationsOpen} aria-controls={notificationsDialogID} onClick={(event) => { notificationsTriggerRef.current = event.currentTarget; setNotificationsOpen(true); }}><Bell aria-hidden="true" className="h-4 w-4" /></Button>
           </div>
-          <div className="flex items-center justify-between px-2 pt-1 text-xs text-sidebar-muted"><span>System</span><span>{snapshot?.health.status ?? "unknown"}</span></div>
         </div>
       </aside>
 
-      <section className="shell-workspace min-w-0 lg:ml-[264px]">
+      <section className={`shell-workspace min-w-0 ${sidebarOpen ? "lg:ml-[264px]" : ""}`}>
         <header className="mobile-shell-header sticky top-0 z-20 flex h-14 min-w-0 lg:h-[42px] items-center justify-between gap-2 border-b border-border bg-background/95 px-4 lg:px-5">
           <div className="flex min-w-0 items-center gap-2">
+            {!sidebarOpen && <Button ref={expandRef} variant="ghost" size="icon-sm" className="hidden lg:inline-flex" aria-label="Expand sidebar" aria-expanded={sidebarOpen} aria-controls={sidebarID} onClick={() => { setSidebarOpen(true); requestAnimationFrame(() => collapseRef.current?.focus()); }}><PanelLeftOpen aria-hidden="true" className="size-4" /></Button>}
             <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-              <DialogTrigger asChild><Button variant="ghost" size="sm" className="lg:hidden" aria-label="Open mobile navigation">Menu</Button></DialogTrigger>
+              <DialogTrigger asChild><Button variant="ghost" size="icon" className="size-11 lg:hidden" aria-label="Open mobile navigation"><Menu aria-hidden="true" className="size-5" /></Button></DialogTrigger>
               <DialogContent showCloseButton={false} aria-modal="true" className="mobile-navigation-drawer inset-y-0 left-0 flex h-dvh w-72 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:max-w-72">
                 <DialogHeader className="sr-only"><DialogTitle>Mobile navigation</DialogTitle><DialogDescription className="sr-only">Choose a page.</DialogDescription></DialogHeader>
-                <div className="flex h-12 shrink-0 items-center justify-end px-3">
-                  <DialogClose asChild><Button variant="ghost" size="sm" className="h-10">Close</Button></DialogClose>
+                <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-3">
+                  <span className="flex min-w-0 items-center gap-2"><img src="/logo.png" alt="" className="size-6" /><span className="text-sm font-semibold">NeroCD</span></span>
+                  <DialogClose asChild><Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="Close navigation"><X aria-hidden="true" className="size-5" /></Button></DialogClose>
                 </div>
                 {navigation("Mobile navigation")}
               </DialogContent>
             </Dialog>
             <h1 className="truncate text-sm font-normal">{current.label}</h1>
           </div>
-          <div className="flex shrink-0 items-center gap-1 lg:hidden">
+          <div className={`flex shrink-0 items-center gap-1 ${sidebarOpen ? "lg:hidden" : ""}`}>
             <Button variant="ghost" size="icon" aria-label="Search navigation" onClick={onOpenSearch}><Search className="h-4 w-4" /></Button>
             <Dialog open={notificationsOpen} onOpenChange={setNotificationsOpen}>
               <DialogTrigger asChild><Button variant="ghost" size="icon" aria-label="Notifications" aria-controls={notificationsDialogID} onClick={(event) => { notificationsTriggerRef.current = event.currentTarget; }}><Bell className="h-4 w-4" /></Button></DialogTrigger>
