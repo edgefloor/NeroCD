@@ -15,13 +15,15 @@ import (
 )
 
 type databaseImportUploadSession struct {
-	actor   string
-	plan    domain.HostingDatabaseImportStagePlan
-	reader  *io.PipeReader
-	writer  *io.PipeWriter
-	armed   chan struct{}
-	done    chan error
-	claimed bool
+	actor    string
+	plan     domain.HostingDatabaseImportStagePlan
+	reader   *io.PipeReader
+	writer   *io.PipeWriter
+	armed    chan struct{}
+	done     chan error
+	claimed  bool
+	failed   chan struct{}
+	failOnce sync.Once
 }
 type databaseImportUploadBroker struct {
 	mu       sync.Mutex
@@ -46,10 +48,12 @@ func (b *databaseImportUploadBroker) reserve(actor string, p domain.HostingDatab
 		}
 	}
 	reader, writer := io.Pipe()
-	s := &databaseImportUploadSession{actor: actor, plan: p, reader: reader, writer: writer, armed: make(chan struct{}), done: make(chan error, 1)}
+	s := &databaseImportUploadSession{actor: actor, plan: p, reader: reader, writer: writer, armed: make(chan struct{}), done: make(chan error, 1), failed: make(chan struct{})}
 	b.sessions[p.Stage.ID] = s
 	return s, true
 }
+func (s *databaseImportUploadSession) streamFailed() { s.failOnce.Do(func() { close(s.failed) }) }
+
 func (b *databaseImportUploadBroker) claim(id, hash string) (*databaseImportUploadSession, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -104,7 +108,7 @@ func (s *Server) uploadBrowserAuthority(r *http.Request, p domain.HostingDatabas
 
 // watchImportUpload closes blocked IO on cancellation, expiry or lost authority.
 // The handler must stop and join the watcher before returning.
-func watchImportUpload(ctx context.Context, closeIO func(error), check func() error) func() {
+func watchImportUpload(ctx context.Context, closeIO func(error), check func() error, failed <-chan struct{}) func() {
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -114,6 +118,9 @@ func watchImportUpload(ctx context.Context, closeIO func(error), check func() er
 		for {
 			select {
 			case <-stop:
+				return
+			case <-failed:
+				closeIO(store.ErrConflict)
 				return
 			case <-ctx.Done():
 				closeIO(ctx.Err())
@@ -195,7 +202,7 @@ func (s *Server) uploadDatabaseImportStageContent(w http.ResponseWriter, r *http
 		_ = session.reader.CloseWithError(err)
 		_ = r.Body.Close()
 	}
-	stop := watchImportUpload(ctx, fail, func() error { return s.uploadBrowserAuthority(r.WithContext(ctx), p) })
+	stop := watchImportUpload(ctx, fail, func() error { return s.uploadBrowserAuthority(r.WithContext(ctx), p) }, session.failed)
 	defer stop()
 	err = copyImportUpload(session.writer, r.Body, p.Stage.UploadSource.Bytes)
 	if err == nil {
@@ -285,7 +292,13 @@ func (s *Server) runnerDatabaseImportUploadStream(w http.ResponseWriter, r *http
 		return
 	}
 	var result error
-	defer func() { _ = session.reader.CloseWithError(result); session.done <- result }()
+	defer func() {
+		if result != nil {
+			session.streamFailed()
+		}
+		_ = session.reader.CloseWithError(result)
+		session.done <- result
+	}()
 	ctx, cancel := context.WithDeadline(r.Context(), *p.Stage.UploadDeadline)
 	defer cancel()
 	select {
@@ -316,10 +329,11 @@ func (s *Server) runnerDatabaseImportUploadStream(w http.ResponseWriter, r *http
 		return nil
 	}
 	stop := watchImportUpload(ctx, func(err error) {
+		session.streamFailed()
 		cancel()
 		_ = session.reader.CloseWithError(err)
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now())
-	}, check)
+	}, check, nil)
 	defer stop()
 	if result = check(); result != nil {
 		writeError(w, result)

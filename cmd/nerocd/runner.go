@@ -293,14 +293,11 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 	if err != nil {
 		return err
 	}
-	if *externalImports {
-		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseImportStage, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportStageCapability, domain.HostingDatabaseImportCapability)
+	registrationCapabilities, err = runnerExternalImportCapabilities(*externalImports, registrationCapabilities)
+	if err != nil {
+		return err
 	}
-	for _, capability := range registrationCapabilities {
-		if (capability == domain.RunTypeDatabaseImportStage || capability == domain.RunTypeDatabaseImport || capability == domain.HostingDatabaseImportStageCapability || capability == domain.HostingDatabaseImportCapability) && !*externalImports {
-			return errors.New("external import capabilities require explicit execution opt-in")
-		}
-	}
+
 	if *remoteDatabaseBackups {
 		if *backupRetention {
 			registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseBackupRetentionCapability, domain.HostingDatabaseMySQLBackupRetentionCapability)
@@ -595,4 +592,19 @@ func runnerRegistryPullCapabilities(enabled, execute bool, complete string, spec
 		caps = append(caps, domain.HostingRegistryPullCapability)
 	}
 	return caps, nil
+}
+
+func runnerExternalImportCapabilities(enabled bool, capabilities []string) ([]string, error) {
+	required := []string{domain.RunTypeDatabaseImportStage, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportStageCapability, domain.HostingDatabaseImportUploadCapability, domain.HostingDatabaseImportCapability}
+	if enabled {
+		return append(capabilities, required...), nil
+	}
+	for _, have := range capabilities {
+		for _, capability := range required {
+			if have == capability {
+				return nil, errors.New("external import capabilities require explicit execution opt-in")
+			}
+		}
+	}
+	return capabilities, nil
 }

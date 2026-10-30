@@ -120,7 +120,7 @@ func TestLocalImportHTTPDeadlineOverrideAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	blocked, output := io.Pipe()
 	done := make(chan error, 1)
-	stop := watchImportUpload(ctx, func(err error) { _ = blocked.CloseWithError(err); _ = output.CloseWithError(err) }, func() error { return nil })
+	stop := watchImportUpload(ctx, func(err error) { _ = blocked.CloseWithError(err); _ = output.CloseWithError(err) }, func() error { return nil }, nil)
 	go func() { _, err := io.Copy(io.Discard, blocked); done <- err }()
 	cancel()
 	select {
@@ -171,7 +171,8 @@ func (r *localImportHTTPRepository) DatabaseImportStagePlan(_ context.Context, r
 	return r.plan, nil
 }
 
-func TestLocalImportRegisteredCookieRoutesAndStream(t *testing.T) {
+func localImportHTTPFixture(t *testing.T, declared int64) (*Server, *localImportHTTPRepository, *http.Cookie, string, string, string, string) {
+	t.Helper()
 	server, base, owner, viewer, runner := archiveHTTPFixture(t)
 	common := &databaseImportHTTPRepository{archiveHTTPRepository: base}
 	setDatabaseImportHTTPRepository(t, server, common)
@@ -181,6 +182,9 @@ func TestLocalImportRegisteredCookieRoutesAndStream(t *testing.T) {
 	deadline := now.Add(time.Minute)
 	sql := "SELECT 'local bounded body';"
 	stage := domain.HostingDatabaseImportStage{ID: "local_stage", Version: domain.HostingDatabaseImportUploadVersion, TargetResourceID: base.resource.ID, Component: "mysql", ExpectedDeployedOperationID: "deployed", ExpectedResourceGeneration: 1, State: "queued", CreatedAt: now, UpdatedAt: now, UploadSource: &domain.HostingDatabaseImportUploadSource{Filename: "display.sql", Bytes: int64(len(sql))}, UploadHash: "sha256:" + strings.Repeat("a", 64), UploadDeadline: &deadline}
+	if declared > 0 {
+		stage.UploadSource.Bytes = declared
+	}
 	common.stage = stage
 	repo := &localImportHTTPRepository{databaseImportHTTPRepository: common, plan: domain.HostingDatabaseImportStagePlan{Stage: stage, ActorID: "usr_bootstrap", Hash: "sha256:" + strings.Repeat("b", 64)}, dispatched: make(chan struct{})}
 	mem := repo.MemoryStore
@@ -189,8 +193,15 @@ func TestLocalImportRegisteredCookieRoutesAndStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	server.app = service
+
+	return server, repo, cookie, owner, viewer, runner, sql
+}
+
+func TestLocalImportRegisteredCookieRoutesAndStream(t *testing.T) {
+	server, repo, cookie, owner, viewer, runner, sql := localImportHTTPFixture(t, 0)
+	stage := repo.plan.Stage
 	metadata := `{"request_id":"local_request","component":"mysql","expected_deployed_operation_id":"deployed","expected_resource_generation":1,"filename":"display.sql","source_bytes":27}`
-	postPath := "/api/v1/resources/" + base.resource.ID + "/database-import-upload-stages"
+	postPath := "/api/v1/resources/" + repo.resource.ID + "/database-import-upload-stages"
 	archiveHTTPCall(t, server, "POST", postPath, viewer, metadata, "application/json", 403)
 	archiveHTTPCall(t, server, "POST", postPath, owner, metadata, "application/json", 202)
 	for _, bad := range []string{strings.Replace(metadata, `display.sql`, `../display.sql`, 1), strings.Replace(metadata, `display.sql`, `\ud800.sql`, 1), strings.TrimSuffix(metadata, "}") + `,"path":"private"}`, strings.Replace(metadata, `:27`, `:0`, 1)} {
@@ -292,7 +303,7 @@ func TestLocalImportStalledSocketRevocationReleasesCapacity(t *testing.T) {
 			default:
 				return nil
 			}
-		})
+		}, nil)
 		defer stop()
 		close(active)
 		_ = copyImportUpload(session.writer, r.Body, 100)
@@ -324,4 +335,85 @@ func TestLocalImportStalledSocketRevocationReleasesCapacity(t *testing.T) {
 	if remaining != 0 {
 		t.Fatal("stalled upload leaked capacity")
 	}
+}
+
+func TestLocalImportRunnerDisconnectCancelsStalledBrowser(t *testing.T) {
+	server, repo, cookie, _, _, runner, _ := localImportHTTPFixture(t, 100)
+	browserDone := make(chan struct{})
+	runnerDone := make(chan struct{})
+	live := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			defer close(browserDone)
+		}
+		if strings.HasSuffix(r.URL.Path, "/upload-stream") {
+			defer close(runnerDone)
+		}
+		server.ServeHTTP(w, r)
+	}))
+	defer live.Close()
+	connection, err := tls.Dial("tcp", strings.TrimPrefix(live.URL, "https://"), &tls.Config{RootCAs: live.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs, MinVersion: tls.VersionTLS12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close() }()
+	_, err = fmt.Fprintf(connection, "PUT /api/v1/database-import-stages/local_stage/content HTTP/1.1\r\nHost: test\r\nCookie: %s=%s\r\nOrigin: %s\r\nX-NeroCD-CSRF: 1\r\nIf-Match: \"%s\"\r\nContent-Type: application/octet-stream\r\nContent-Length: 100\r\n\r\nx", cookie.Name, cookie.Value, server.publicOrigin, repo.plan.Stage.UploadHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-repo.dispatched:
+	case <-time.After(3 * time.Second):
+		t.Fatal("browser did not dispatch")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	body := `{"operation_id":"local_stage","run_id":"db_import_stage_local_stage","lease_id":"lease","attempt":1,"fence":"fence","plan_hash":"` + repo.plan.Hash + `"}`
+	request, err := http.NewRequestWithContext(ctx, "POST", live.URL+"/api/v1/runners/hosting/database-import-stage/upload-stream", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+runner)
+	request.Header.Set("Content-Type", "application/json")
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		response, e := live.Client().Do(request)
+		if e == nil {
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+		}
+	}()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		server.databaseImportUploads.mu.Lock()
+		session := server.databaseImportUploads.sessions["local_stage"]
+		claimed := session != nil && session.claimed
+		server.databaseImportUploads.mu.Unlock()
+		if claimed {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatal("runner did not claim stream")
+		}
+	}
+	// Browser remains connected and sends no further bytes. Only the runner is lost.
+	cancel()
+	for _, done := range []<-chan struct{}{runnerDone, browserDone, clientDone} {
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("runner loss left an owned handler blocked")
+		}
+	}
+	plan := repo.plan
+	plan.Stage.ID = "later_stage"
+	if _, ok := server.databaseImportUploads.reserve("later_actor", plan); !ok {
+		t.Fatal("runner loss leaked upload capacity")
+	}
+	server.databaseImportUploads.remove(plan.Stage.ID)
 }
