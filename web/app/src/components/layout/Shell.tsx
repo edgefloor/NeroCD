@@ -30,6 +30,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   const [accountOpen, setAccountOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarMotion, setSidebarMotion] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const dialogID = useId();
   const accountDialogID = `${dialogID}-account`;
@@ -48,6 +49,17 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
     reducedMotion.addEventListener("change", stopMotion);
     return () => { breakpoint.removeEventListener("change", closeOnDesktop); reducedMotion.removeEventListener("change", stopMotion); };
   }, []);
+
+  useEffect(() => {
+    if (!sidebarMotion) return;
+    const frame = requestAnimationFrame(() => {
+      const sidebar = sidebarRef.current;
+      sidebar?.getBoundingClientRect();
+      const moving = sidebar?.getAnimations().some((animation) => "transitionProperty" in animation && animation.transitionProperty === "width" && animation.playState !== "finished");
+      if (!moving) setSidebarMotion(false);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [sidebarMotion, sidebarOpen]);
 
   useEffect(() => {
     const focusFilter = (event: KeyboardEvent) => {
@@ -88,7 +100,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
         contentRef.current?.focus();
         contentRef.current?.scrollIntoView({ block: "start" });
       }}>Skip to page content</a>
-      <aside id={sidebarID} data-collapsed={!sidebarOpen} className="desktop-navigation-sidebar fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col overflow-x-hidden bg-sidebar lg:flex" onTransitionEnd={(event) => { if (event.target === event.currentTarget && event.propertyName === "width") setSidebarMotion(false); }}>
+      <aside ref={sidebarRef} id={sidebarID} data-collapsed={!sidebarOpen} className="desktop-navigation-sidebar fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col overflow-x-hidden bg-sidebar lg:flex" onTransitionEnd={(event) => { if (event.target === event.currentTarget && event.propertyName === "width") setSidebarMotion(false); }}>
         <div className="relative flex h-[42px] shrink-0 items-center gap-2.5 px-4">
           <span className="sidebar-label flex shrink-0 items-center gap-2.5 whitespace-nowrap" aria-hidden={!sidebarOpen}><img src="/logo.png" alt="" className="h-7 w-7 shrink-0 object-contain" /><strong className="text-base font-semibold tracking-tight">NeroCD</strong></span>
           <Button variant="ghost" size="icon-sm" className="absolute right-2 top-[5px] shrink-0 text-sidebar-muted" aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"} title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"} aria-expanded={sidebarOpen} aria-controls={sidebarID} onClick={(event) => { setSidebarMotion(!window.matchMedia("(prefers-reduced-motion: reduce)").matches); setSidebarOpen(!sidebarOpen); event.currentTarget.focus({ preventScroll: true }); }}>{sidebarOpen ? <PanelLeftClose aria-hidden="true" className="size-4" /> : <PanelLeftOpen aria-hidden="true" className="size-4" />}</Button>

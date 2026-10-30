@@ -767,6 +767,14 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
   expect(motion[0]![2]!.width).toBe(48);
   expect(motion[1]![0]!.width).toBe(48);
   expect(motion[1]![2]!.width).toBe(264);
+  await page.evaluate(async () => {
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Collapse sidebar"]')!;
+    toggle.click();
+    await new Promise(requestAnimationFrame);
+    toggle.click();
+  });
+  await expect(page.locator(".mobile-app-shell")).toHaveAttribute("data-sidebar-motion", "false");
+  await expect.poll(() => page.locator(".desktop-navigation-sidebar").evaluate((element) => element.getBoundingClientRect().width)).toBe(264);
   await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
   await expect.poll(() => page.locator(".desktop-navigation-sidebar").evaluate((element) => element.getBoundingClientRect().width)).toBe(48);
   await page.setViewportSize({ width: 393, height: 844 });
