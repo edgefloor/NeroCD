@@ -247,17 +247,25 @@ button:disabled {
   opacity: 0.3;
 }
 
-/* Focus states — clean ring for accessibility */
-*:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+@layer base {
+  /* Fallback focus styles yield to each control's explicit focus treatment. */
+  *:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline-offset: 0;
+  }
 }
 
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 0px;
+@layer components {
+  [data-slot="command-input-wrapper"] [data-slot="input-group"]:has(input:focus-visible) {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 20%, transparent);
+  }
 }
 
 /* Keep the fallback in its own rule so CSS optimization cannot discard it. */
