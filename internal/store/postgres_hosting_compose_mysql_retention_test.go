@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"nerocd/db"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
@@ -167,5 +169,54 @@ func TestPostgresComposePostgreSQLRetentionFreshPolicyRemainsQualified(t *testin
 	read, err := service.GetDatabaseBackupRetention(ctx, source.ID)
 	if err != nil || !reflect.DeepEqual(read, &policy) {
 		t.Fatal("fresh PostgreSQL component retention readback", err)
+	}
+}
+
+func TestPostgresComposeMySQLRetentionPopulatedMigrationPreservesLegacyScope(t *testing.T) {
+	f := composeMySQLRetentionFixture(t)
+	if _, err := f.db.Exec(f.ctx, `DROP FUNCTION nerocd_backup_retention_source_scope() CASCADE; DROP FUNCTION nerocd_mysql_component_retention_schema_compatible()`); err != nil {
+		t.Fatal(err)
+	}
+	historical, err := db.Files.ReadFile("migrations/0103_hosting_mysql_backup_retention.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, _, found := strings.Cut(string(historical), "CREATE OR REPLACE FUNCTION nerocd_backup_retention_receipt()")
+	if !found {
+		t.Fatal("historical retention lease source missing")
+	}
+	if _, err = f.db.Exec(f.ctx, lease); err != nil {
+		t.Fatal("restore exact predecessor lease guard", err)
+	}
+	for i := range 3 {
+		ownedRetentionBackup(t, f, i)
+	}
+	now := time.Now().UTC()
+	legacy := domain.HostingDatabaseBackupRetentionPolicy{Version: domain.HostingDatabaseBackupRetentionVersion, ProjectID: f.resource.ProjectID, ResourceID: f.resource.ID, ResourceGeneration: f.resource.Generation, Revision: 1, Enabled: false, Local: domain.BackupRetentionLimits{KeepCount: 1}, CreatedAt: now, UpdatedAt: now}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(f.ctx, `INSERT INTO hosting_database_backup_retention_policies(resource_id,project_id,actor_id,revision,body) VALUES($1,$2,'usr_bootstrap',1,$3)`, f.resource.ID, f.resource.ProjectID, raw); err != nil {
+		t.Fatal(err)
+	}
+	const snapshot = `SELECT jsonb_build_array((SELECT jsonb_agg(to_jsonb(b) ORDER BY b.id) FROM hosting_database_backups b),(SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM hosting_database_backup_copies c),(SELECT body FROM hosting_database_backup_retention_policies WHERE resource_id=$1))::text`
+	var before, after string
+	if err = f.db.QueryRow(f.ctx, snapshot, f.resource.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err = applyEmbeddedMigrations(f.ctx, f.db, "0107_hosting_compose_mysql_remote_restore.sql", "0108_hosting_compose_mysql_retention.sql"); err != nil {
+		t.Fatal("populated component retention upgrade", err)
+	}
+	if err = f.db.QueryRow(f.ctx, snapshot, f.resource.ID).Scan(&after); err != nil || before != after {
+		t.Fatal("retention upgrade rewrote saved evidence", err)
+	}
+	policy, err := f.service.GetDatabaseBackupRetention(f.ctx, f.resource.ID)
+	if err != nil || policy == nil || policy.Version != legacy.Version || policy.SourceScope != nil {
+		t.Fatal("upgrade relabeled historical policy", err)
+	}
+	var qualified bool
+	if err = f.db.QueryRow(f.ctx, `SELECT count(*)=3 AND bool_and(proconfig[1] LIKE 'search_path=pg_catalog,%') FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname IN ('nerocd_backup_retention_source_scope','nerocd_backup_retention_lease','nerocd_mysql_component_retention_schema_compatible')`).Scan(&qualified); err != nil || !qualified {
+		t.Fatal("component retention functions not schema-bound", err)
 	}
 }
