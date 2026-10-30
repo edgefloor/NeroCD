@@ -573,6 +573,7 @@ async function wordpressWorkflow(h, initial) {
   const manualPolicy=await checkedResponse(manualPolicyResponse,200);
   if(manualPolicyInput.expected_revision!==automaticPolicy.revision||manualPolicyInput.enabled!==true||manualPolicyInput.automatic!==false||manualPolicyInput.local.keep_count!==1||manualPolicyInput.remote.keep_count!==1||manualPolicy.automatic!==false||manualPolicy.revision!==automaticPolicy.revision+1||JSON.stringify(manualPolicy.source_scope)!==JSON.stringify(automaticPolicy.source_scope))throw Error('WordPress MySQL manual retention policy changed');
   await expect(retention).toContainText('Saved retention revision '+manualPolicy.revision+'.');
+  step='wordpress_mysql_database_retention_manual_preview';
   const previewPending=response(page,retentionPath+'/previews');
   await retention.getByRole('button',{name:'Preview retention deletion',exact:true}).click();
   const previewResponse=await previewPending,previewInput=previewResponse.request().postDataJSON();
@@ -585,15 +586,18 @@ async function wordpressWorkflow(h, initial) {
   await expect(review).toContainText('newest');
   for(const width of [320,390,430,1280]){await page.setViewportSize({width,height:900});await expect(review).toBeVisible();if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('WordPress MySQL retention controls responsive overflow');}
   await review.getByRole('checkbox',{name:/I confirm permanent deletion/}).check();
+  step='wordpress_mysql_database_retention_manual_execute';
   const executePending=response(page,retentionPath+'/executions');
   await review.getByRole('button',{name:'Delete selected backup copies',exact:true}).click();
   const executeResponse=await executePending,executeInput=executeResponse.request().postDataJSON();
   const executed=await checkedResponse(executeResponse,202);
   if(executeInput.preview_id!==preview.id||executeInput.expected_policy_revision!==manualPolicy.revision||executeInput.expected_plan_hash!==preview.plan_hash||executed.preview_id!==preview.id||executed.policy_revision!==manualPolicy.revision||executed.plan_hash!==preview.plan_hash)throw Error('WordPress MySQL retention execution authority changed');
   // The UI performs the reviewed execution; this second API submission proves exact replay.
-  const replay=await checkedResponse(await context.request.post(retentionPath+'/executions',{data:executeInput}),202);
+  step='wordpress_mysql_database_retention_manual_replay';
+  const replay=await checkedResponse(await context.request.post(retentionPath+'/executions',{headers:{"X-NeroCD-CSRF":"1",Origin:origin},data:executeInput}),202);
   const batch=items=>items.map(item=>[item.copy_id,item.backup_id,item.location]).sort((a,b)=>a[0].localeCompare(b[0]));
   if(executed.version!=='mysql.backup-retention.v1'||executed.resource_id!==resourceID||JSON.stringify(batch(executed.items))!==JSON.stringify(batch(selectedCopies))||replay.id!==executed.id||replay.preview_id!==executed.preview_id||replay.policy_revision!==executed.policy_revision||replay.plan_hash!==executed.plan_hash||JSON.stringify(batch(replay.items))!==JSON.stringify(batch(executed.items)))throw Error('WordPress MySQL retention replay changed batch');
+  step='wordpress_mysql_database_retention_manual_history';
   await expect.poll(async()=>{
     const history=await checkedResponse(await context.request.get(retentionPath+'/executions'),200);
     const manual=history.find(entry=>entry.id===executed.id);

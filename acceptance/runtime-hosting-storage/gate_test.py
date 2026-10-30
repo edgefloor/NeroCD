@@ -1406,6 +1406,26 @@ class WordPressModeContractTests(unittest.TestCase):
                 result = subprocess.run(["/bin/bash", str(gate), mode], env=env, capture_output=True, text=True, check=True)
                 self.assertEqual(result.stdout.splitlines(), ["acceptance/runtime-hosting-storage/gate.sh", mode])
 
+    def test_wordpress_retention_replay_preserves_cookie_mutation_authority(self):
+        browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
+        replay = browser.split("  const replay=", 1)[1].split("\n", 1)[0]
+        script = r"""
+const origin='https://127.0.0.1:25443';
+const retentionPath='/api/v1/resources/resource/database-backup-retention';
+const executeInput={request_id:'execute',preview_id:'preview',expected_policy_revision:2,expected_plan_hash:'sha256:'+'a'.repeat(64)};
+const context={request:{post:async(path,options)=>({path,...options})}};
+const checkedResponse=async(value,status)=>({request:await value,status});
+(async()=>{const replay=""" + replay + r"""
+console.log(JSON.stringify({replay,executeInput}));})();
+"""
+        run = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True, timeout=5)
+        result = json.loads(run.stdout)
+        self.assertEqual(result["replay"]["status"], 202)
+        request = result["replay"]["request"]
+        self.assertEqual(request["path"], "/api/v1/resources/resource/database-backup-retention/executions")
+        self.assertEqual(request["data"], result["executeInput"])
+        self.assertEqual(request.get("headers"), {"X-NeroCD-CSRF": "1", "Origin": "https://127.0.0.1:25443"})
+
     def test_wordpress_retention_survivor_joins_multiple_deletions_and_successful_uploads(self):
         browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
         helper = "function selectMySQLRetentionSurvivor(" + browser.split("function selectMySQLRetentionSurvivor(", 1)[1].split("async function report(", 1)[0]

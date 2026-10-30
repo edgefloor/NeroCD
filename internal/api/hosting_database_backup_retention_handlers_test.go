@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -163,6 +165,64 @@ func testBackupRetentionHTTPPermissionsAndClosedInputs(t *testing.T, version str
 	archiveHTTPCall(t, server, "GET", path+"/executions/execution", viewer, "", "", 200)
 	for _, suffix := range []string{"plan", "mutation", "retirement", "credentials"} {
 		archiveHTTPCall(t, server, "POST", "/api/v1/runners/hosting/database-backup-retention/"+suffix, owner, `{}`, "application/json", 401)
+	}
+}
+
+func TestMySQLBackupRetentionCookieMutationAuthority(t *testing.T) {
+	server, original, _, _, _ := archiveHTTPFixture(t)
+	original.resource.Kind = "database"
+	repo := &retentionHTTPRepository{archiveHTTPRepository: original, version: domain.HostingDatabaseMySQLBackupRetentionVersion}
+	mem := repo.MemoryStore
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.app = service
+	cookie := createBrowserSession(t, server)
+	server.publicOrigin = "https://127.0.0.1:25443"
+	path := "/api/v1/resources/" + repo.resource.ID + "/database-backup-retention"
+	for _, route := range []struct {
+		name, method, suffix, body string
+		status                     int
+	}{
+		{"policy", http.MethodPut, "", `{"request_id":"policy","expected_revision":1,"expected_resource_generation":1,"enabled":true,"automatic":false,"local":{"keep_count":1,"keep_days":0,"max_bytes":0},"remote":{"keep_count":1,"keep_days":0,"max_bytes":0}}`, http.StatusOK},
+		{"preview", http.MethodPost, "/previews", `{"request_id":"preview","expected_policy_revision":2}`, http.StatusOK},
+		{"execution", http.MethodPost, "/executions", `{"request_id":"execute","preview_id":"preview","expected_policy_revision":2,"expected_plan_hash":"sha256:` + strings.Repeat("a", 64) + `"}`, http.StatusAccepted},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			for _, authority := range []struct {
+				name, csrf, origin string
+				status             int
+			}{
+				{"data_only", "", "", http.StatusForbidden},
+				{"missing_origin", "1", "", http.StatusForbidden},
+				{"wrong_origin", "1", "https://other.example.invalid", http.StatusForbidden},
+				{"missing_csrf", "", server.publicOrigin, http.StatusForbidden},
+				{"authorized", "1", server.publicOrigin, route.status},
+				{"identical_replay", "1", server.publicOrigin, route.status},
+			} {
+				t.Run(authority.name, func(t *testing.T) {
+					before := repo.calls
+					request := httptest.NewRequest(route.method, path+route.suffix, strings.NewReader(route.body))
+					request.AddCookie(cookie)
+					request.Header.Set("Content-Type", "application/json")
+					request.Header.Set("X-NeroCD-CSRF", authority.csrf)
+					request.Header.Set("Origin", authority.origin)
+					response := httptest.NewRecorder()
+					server.ServeHTTP(response, request)
+					if response.Code != authority.status {
+						t.Fatalf("status = %d, want %d: %s", response.Code, authority.status, response.Body.String())
+					}
+					wantCalls := before
+					if authority.status == route.status {
+						wantCalls++
+					}
+					if repo.calls != wantCalls {
+						t.Fatalf("repository calls = %d, want %d", repo.calls, wantCalls)
+					}
+				})
+			}
+		})
 	}
 }
 
