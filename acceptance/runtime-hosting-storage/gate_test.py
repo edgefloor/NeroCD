@@ -1408,6 +1408,70 @@ class WordPressModeContractTests(unittest.TestCase):
                 result = subprocess.run(["/bin/bash", str(gate), mode], env=env, capture_output=True, text=True, check=True)
                 self.assertEqual(result.stdout.splitlines(), ["acceptance/runtime-hosting-storage/gate.sh", mode])
 
+    def test_wordpress_external_object_get_preserves_raw_sql_gzip_and_read_errors(self):
+        wordpress = Path("internal/api/hosting_catalog_wordpress_runtime_integration_test.go").read_text()
+        retention = Path("internal/api/hosting_database_backup_retention_runtime_integration_test.go").read_text()
+        helper = "func databaseRetentionObservationClient(" + retention.split("func databaseRetentionObservationClient(", 1)[1].split("func databaseRetentionObserveRemote(", 1)[0]
+        samples = "type wordpressRuntimeExternalSQLSample struct" + wordpress.split("type wordpressRuntimeExternalSQLSample struct", 1)[1].split("func wordpressRuntimeExternalSQL(t", 1)[0]
+        selection = ""
+        if "externalObjectOptions := observer.Options()" in wordpress:
+            selection = "externalObjectOptions := observer.Options()" + wordpress.split("externalObjectOptions := observer.Options()", 1)[1].split("\n\tfor _, sample := range externalSamples", 1)[0]
+        receiver = "externalObjectClient" if "object, err := externalObjectClient.GetObject" in wordpress else "observer"
+        program = r'''package main
+import ("bytes";"compress/gzip";"context";"encoding/json";"encoding/xml";"errors";"io";"net/http";"net/http/httptest";"os";"strings";"sync/atomic";"time";"github.com/aws/aws-sdk-go-v2/aws";"github.com/aws/aws-sdk-go-v2/service/s3")
+''' + helper + samples + r'''
+func main() {
+ results:=[]map[string]any{}
+ samples:=wordpressRuntimeExternalSQLSamples()
+ for _, test:=range []struct{sample wordpressRuntimeExternalSQLSample; short bool}{{samples[0],false},{samples[1],false},{samples[0],true}} {
+  var calls atomic.Int32
+  var scoped atomic.Bool
+  server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+   calls.Add(1)
+   scoped.Store(r.Method=="GET"&&r.URL.Path=="/nerocd-storage-runtime/"+test.sample.Key&&r.URL.RawQuery=="x-id=GetObject"&&strings.Contains(r.Header.Get("Authorization"),"Credential=fixture_access/"))
+   w.Header().Set("ETag",`"fixture-etag"`)
+   w.Header().Set("Content-Type","application/octet-stream")
+   if test.short {w.Header().Set("Content-Length","1048576")}
+   _,_=w.Write(test.sample.Encoded)
+  }))
+  observerTransport:=&http.Transport{Proxy:nil,DisableKeepAlives:true,ResponseHeaderTimeout:3*time.Second}
+  options:=databaseRetentionObservationClient("fixture_access","fixture_secret",&http.Client{Transport:observerTransport,Timeout:3*time.Second}).Options()
+  options.BaseEndpoint=aws.String(server.URL)
+  observer:=s3.New(options)
+''' + selection + r'''
+  object,err:=''' + receiver + r'''.GetObject(context.Background(),&s3.GetObjectInput{Bucket:aws.String("nerocd-storage-runtime"),Key:aws.String(test.sample.Key)})
+  result:=map[string]any{"short":test.short,"get_ok":err==nil}
+  if err==nil {
+   raw,readErr:=io.ReadAll(io.LimitReader(object.Body,int64(len(test.sample.Encoded))+1))
+   closeErr:=object.Body.Close()
+   result["bytes_match"]=bytes.Equal(raw,test.sample.Encoded)
+   result["etag_match"]=aws.ToString(object.ETag)==`"fixture-etag"`
+   result["read_failed"]=readErr!=nil
+   result["close_ok"]=closeErr==nil
+  } else {result["xml_rejected"]=strings.Contains(err.Error(),"remote observation document invalid")}
+  result["calls"]=calls.Load();result["scoped"]=scoped.Load()
+  observerTransport.CloseIdleConnections();server.Close()
+  results=append(results,result)
+ }
+ if err:=json.NewEncoder(os.Stdout).Encode(results);err!=nil{panic(err)}
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "object_get.go"
+            path.write_text(program)
+            run = subprocess.run(["go", "run", str(path)], capture_output=True, text=True, check=True, timeout=30)
+        cases = json.loads(run.stdout)
+        self.assertEqual(len(cases), 3)
+        for case in cases:
+            self.assertTrue(case["get_ok"], case)
+            self.assertTrue(case["scoped"], case)
+            self.assertEqual(case["calls"], 1)
+            self.assertTrue(case["etag_match"], case)
+            self.assertTrue(case["close_ok"], case)
+            self.assertEqual(case["read_failed"], case["short"], case)
+            if not case["short"]:
+                self.assertTrue(case["bytes_match"], case)
+
     def test_wordpress_external_sql_samples_use_plain_magic_gzip_and_rejected_truncation(self):
         source = Path("internal/api/hosting_catalog_wordpress_runtime_integration_test.go").read_text()
         samples = "type wordpressRuntimeExternalSQLSample struct" + source.split("type wordpressRuntimeExternalSQLSample struct", 1)[1].split("func wordpressRuntimeExternalSQL(t", 1)[0]

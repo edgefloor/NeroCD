@@ -1196,9 +1196,13 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 		t.Fatal("external SQL fixture proof table already exists or samples unavailable")
 	}
 	externalIdentities := map[string]domain.HostingDatabaseImportSourceIdentity{}
+	// Inventory observation validates XML; SQL and gzip need the ordinary SDK body.
+	externalObjectOptions := observer.Options()
+	externalObjectOptions.HTTPClient = &http.Client{Transport: observerTransport, Timeout: 3 * time.Second}
+	externalObjectClient := s3.New(externalObjectOptions)
 	for _, sample := range externalSamples {
 		silo.command("printf '%s' '" + base64.StdEncoding.EncodeToString(sample.Encoded) + "' | base64 -d | mc pipe fixture/nerocd-storage-runtime/" + sample.Key + " >/dev/null\n")
-		object, err := observer.GetObject(t.Context(), &s3.GetObjectInput{Bucket: aws.String("nerocd-storage-runtime"), Key: aws.String(sample.Key)})
+		object, err := externalObjectClient.GetObject(t.Context(), &s3.GetObjectInput{Bucket: aws.String("nerocd-storage-runtime"), Key: aws.String(sample.Key)})
 		if err != nil {
 			t.Fatal("owned external SQL fixture GET unavailable")
 		}
