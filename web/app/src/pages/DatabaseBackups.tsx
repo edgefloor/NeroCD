@@ -677,7 +677,7 @@ function ComposeDatabaseBackups(
     >
       <h5 className="font-medium">Compose database logical backups</h5>
       <p>
-        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. MySQL imports can use a local archive or a recorded successful upload; retention is unavailable. Archives contain
+        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. MySQL imports can use a local archive or a recorded successful upload. Retention for the qualified mysql component is configured below. Archives contain
         database records, not uploaded files or volume contents. The runner
         verifies the live profile before execution. Source writes may continue
         during backup.
@@ -827,6 +827,14 @@ function ComposeDatabaseBackups(
           Retry exact database request
         </Button>
       ) : null}
+      <DatabaseBackupRetention
+        database={{ resource, engine: "mysql", source_scope: { backup_version: "mysql.compose-logical-local.v1", component: "mysql" } }}
+        sourceEligible={source?.components.some(c => c.component === "mysql" && c.engine === "mysql" && c.major_version === 8 && c.eligible) === true}
+        scope={scope}
+        owner={owner}
+        blocked={locked}
+        onDenied={retireComposeAccess}
+      />
       <ComposeDatabaseBackupSchedules
         resource={resource}
         scope={scope}

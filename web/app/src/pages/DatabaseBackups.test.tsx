@@ -4,6 +4,7 @@ vi.mock("../api/hosting-database-backup-retention", async (original) => ({
   listRetentionExecutions: vi.fn(async () => []),
 }));
 import * as remote from "../api/hosting-database-backup-targets";
+import * as retention from "../api/hosting-database-backup-retention";
 vi.mock("../api/hosting-database-backup-targets", async (original) => ({
   ...(await original<
     typeof import("../api/hosting-database-backup-targets")
@@ -85,6 +86,7 @@ const completed: DatabaseBackup = {
   },
 };
 beforeEach(() => {
+  vi.mocked(retention.getRetentionPolicy).mockResolvedValue(null);
   vi.mocked(destinations.getResourceBinding).mockResolvedValue({ id: "binding", resource_id: "db", destination_id: "runner", runtime_namespace: "test", created_by: "owner", created_at: "2026-10-25T12:00:00Z" });
   vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([]);
   vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([]);
@@ -866,4 +868,19 @@ test("Compose transfer authorization denial retires remote import controls", asy
  await screen.findByText("Component database backup access is unavailable.");
  expect(screen.queryByRole("button", { name: "Restore database backup" })).toBeNull();
  expect(api.restoreDatabaseBackup).not.toHaveBeenCalled();
+});
+
+
+test("Compose MySQL integrates resource-scoped retention without fabricating a native database", async () => {
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await screen.findByRole("heading", { name: "Compose MySQL backup retention" });
+ expect(vi.mocked(retention.getRetentionPolicy).mock.calls[0]![1]).toEqual({ resource: expect.objectContaining({ id: "db", generation: 2 }), engine: "mysql", source_scope: { backup_version: "mysql.compose-logical-local.v1", component: "mysql" } });
+ expect(vi.mocked(retention.getRetentionPolicy).mock.calls[0]![1]).not.toHaveProperty("binding");
+});
+
+test("Compose PostgreSQL without a saved matching MySQL policy offers no retention editor", async () => {
+ mountComposeBackupPanel();
+ await screen.findByText(/Compose MySQL retention is unavailable until/);
+ expect(screen.queryByRole("heading", { name: "Compose MySQL backup retention" })).toBeNull();
+ expect(screen.queryByRole("button", { name: "Save retention policy" })).toBeNull();
 });

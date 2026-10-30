@@ -8,12 +8,19 @@ import {
 export const retentionVersion = "postgresql.backup-retention.v1" as const;
 export const mysqlRetentionVersion = "mysql.backup-retention.v1" as const;
 type RetentionVersion = typeof retentionVersion | typeof mysqlRetentionVersion;
+export type RetentionSourceScope = { backup_version: "mysql.compose-logical-local.v1"; component: string };
+export type RetentionContext = {
+  resource: Pick<HostingDatabase["resource"], "id" | "generation">;
+  engine: HostingDatabase["engine"];
+  source_scope?: RetentionSourceScope;
+};
 export type RetentionLimits = {
   keep_count: number;
   keep_days: number;
   max_bytes: number;
 };
 export type RetentionPolicy = {
+  source_scope?: RetentionSourceScope;
   version: RetentionVersion;
   project_id: string;
   resource_id: string;
@@ -60,6 +67,7 @@ export type RetentionCopy = {
   protected_reasons: (typeof protectedReasons)[number][];
 };
 export type RetentionPreview = {
+  source_scope?: RetentionSourceScope;
   id: string;
   version: RetentionVersion;
   project_id: string;
@@ -149,7 +157,8 @@ function limits(raw: unknown): RetentionLimits {
 function scoped(
   v: Record<string, unknown>,
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
+  sourceScoped = false,
 ) {
   if (
     v.version !== (db.engine === "mysql" ? mysqlRetentionVersion : retentionVersion) ||
@@ -157,6 +166,14 @@ function scoped(
     v.resource_id !== db.resource.id
   )
     fail();
+  if (sourceScoped) {
+    if (db.source_scope) {
+      const source = document(v.source_scope, ["backup_version", "component"]);
+      if (db.engine !== "mysql" || source.backup_version !== "mysql.compose-logical-local.v1" ||
+        source.backup_version !== db.source_scope.backup_version || source.component !== db.source_scope.component ||
+        typeof source.component !== "string" || !/^[a-z][a-z0-9_-]{0,62}$/.test(source.component)) fail();
+    } else if (v.source_scope !== undefined) fail();
+  }
 }
 function unique<T>(
   raw: unknown,
@@ -172,7 +189,7 @@ function unique<T>(
 export function parseRetentionPolicy(
   raw: unknown,
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
 ): RetentionPolicy {
   const v = document(raw, [
     "version",
@@ -186,8 +203,8 @@ export function parseRetentionPolicy(
     "remote",
     "created_at",
     "updated_at",
-  ]);
-  scoped(v, scope, db);
+  ], ["source_scope"]);
+  scoped(v, scope, db, true);
   if (
     !integer(v.revision, Number.MAX_SAFE_INTEGER, 1) ||
     !integer(v.resource_generation, Number.MAX_SAFE_INTEGER, 1) ||
@@ -206,7 +223,7 @@ export function parseRetentionPolicy(
 export function parseRetentionPreview(
   raw: unknown,
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
 ): RetentionPreview {
   const v = document(raw, [
     "id",
@@ -220,8 +237,8 @@ export function parseRetentionPreview(
     "selection_truncated",
     "items",
     "created_at",
-  ]);
-  scoped(v, scope, db);
+  ], ["source_scope"]);
+  scoped(v, scope, db, true);
   if (
     !id(v.id) ||
     !integer(v.policy_revision, Number.MAX_SAFE_INTEGER, 1) ||
@@ -284,7 +301,7 @@ export function parseRetentionPreview(
 export function parseRetentionExecution(
   raw: unknown,
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
 ): RetentionExecution {
   const v = document(raw, [
     "id",
@@ -378,7 +395,7 @@ export const retentionKey = (s: DatabaseScope, resource: string) =>
     resource,
   ] as const;
 async function call(
-  db: HostingDatabase,
+  db: RetentionContext,
   suffix: string,
   options: RequestOptions,
   signal?: AbortSignal,
@@ -397,7 +414,7 @@ function identity(v: string) {
 }
 export async function getRetentionPolicy(
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
   signal?: AbortSignal,
 ) {
   const raw = await call(db, "", {}, signal);
@@ -405,7 +422,7 @@ export async function getRetentionPolicy(
 }
 export async function saveRetentionPolicy(
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
   input: RetentionPolicyInput,
   signal?: AbortSignal,
 ) {
@@ -448,7 +465,7 @@ export async function saveRetentionPolicy(
 }
 export async function createRetentionPreview(
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
   input: RetentionPreviewInput,
   signal?: AbortSignal,
 ) {
@@ -470,7 +487,7 @@ export async function createRetentionPreview(
 }
 export async function executeRetention(
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
   input: RetentionExecutionInput,
   signal?: AbortSignal,
   expectedExecutionID?: string,
@@ -504,7 +521,7 @@ export async function executeRetention(
 }
 export async function listRetentionExecutions(
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
   signal?: AbortSignal,
 ) {
   return unique(
@@ -516,7 +533,7 @@ export async function listRetentionExecutions(
 }
 export async function getRetentionExecution(
   scope: DatabaseScope,
-  db: HostingDatabase,
+  db: RetentionContext,
   execution: string,
   signal?: AbortSignal,
 ) {

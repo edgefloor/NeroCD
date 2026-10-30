@@ -344,3 +344,25 @@ test("native MySQL policy, preview and execution are engine-bound while preservi
    expect(() => parse(value, scope, mysql)).toThrow();
  }
 });
+
+test("Compose MySQL policy and preview require the exact saved source scope", async () => {
+ const source_scope = { backup_version: "mysql.compose-logical-local.v1" as const, component: "mysql" };
+ const context = { resource: db.resource, engine: "mysql" as const, source_scope };
+ const scopedPolicy = { ...policy, version: "mysql.backup-retention.v1", source_scope };
+ const scopedPreview = { ...preview, version: "mysql.backup-retention.v1", source_scope };
+ expect(parseRetentionPolicy(scopedPolicy, scope, context).source_scope).toEqual(source_scope);
+ expect(parseRetentionPreview(scopedPreview, scope, context).source_scope).toEqual(source_scope);
+ for (const invalid of [undefined, { ...source_scope, component: "other" }, { ...source_scope, backup_version: "postgresql.compose-logical-local.v1" }, { ...source_scope, private_key: "secret" }]) {
+  expect(() => parseRetentionPolicy({ ...scopedPolicy, source_scope: invalid }, scope, context)).toThrow();
+  expect(() => parseRetentionPreview({ ...scopedPreview, source_scope: invalid }, scope, context)).toThrow();
+ }
+ expect(() => parseRetentionPolicy(scopedPolicy, scope, { ...db, engine: "mysql" })).toThrow();
+ expect(() => parseRetentionPreview(scopedPreview, scope, { ...db, engine: "mysql" })).toThrow();
+ const input = { request_id, expected_revision: 1, expected_resource_generation: 2, enabled: false, automatic: false, local: policy.local, remote: policy.remote };
+ const fetch = vi.fn().mockResolvedValue(respond({ ...scopedPolicy, revision: 2, enabled: false }));
+ vi.stubGlobal("fetch", fetch);
+ await saveRetentionPolicy(scope, context, input);
+ expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual(input);
+ expect(JSON.parse(fetch.mock.calls[0]![1].body)).not.toHaveProperty("source_scope");
+ expect(parseRetentionExecution({ ...execution, version: "mysql.backup-retention.v1" }, scope, context).id).toBe("execution");
+});

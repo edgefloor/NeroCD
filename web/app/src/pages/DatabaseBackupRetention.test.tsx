@@ -135,7 +135,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
 });
-function mount(owner = true, strict = false, initialDatabase = db) {
+function mount(owner = true, strict = false, initialDatabase: api.RetentionContext = db, sourceEligible = initialDatabase.source_scope ? true : undefined) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -145,10 +145,12 @@ function mount(owner = true, strict = false, initialDatabase = db) {
     actor = "owner",
     isOwner = owner,
     blocked = false,
+    currentSourceEligible = sourceEligible,
   ) => (
     <QueryClientProvider client={client}>
       <DatabaseBackupRetention
         database={database}
+        sourceEligible={currentSourceEligible}
         scope={{ ...scope, actor }}
         owner={isOwner}
         blocked={blocked}
@@ -690,4 +692,88 @@ test("native MySQL owner uses existing policy, protected preview, and independen
  expect(screen.getByText(/backup_old · local · copy local_copy · deleted/)).toBeTruthy();
  expect(screen.getByText(/backup_old · remote · copy remote_copy · uncertain/)).toBeTruthy();
  expect(screen.getByText(/Reservation remains held/)).toBeTruthy();
+});
+
+
+test("Compose MySQL retention keeps independent limits, exact ambiguous retry and scoped manual consent", async () => {
+ const source_scope = { backup_version: "mysql.compose-logical-local.v1" as const, component: "mysql" };
+ const context: api.RetentionContext = { resource: db.resource, engine: "mysql", source_scope };
+ const version = api.mysqlRetentionVersion;
+ vi.mocked(api.getRetentionPolicy).mockResolvedValue({ ...policy, version, source_scope });
+ vi.mocked(api.createRetentionPreview).mockResolvedValue({ ...preview, version, source_scope });
+ mount(true, true, context);
+ await button("Save retention policy");
+ expect(screen.getByRole("heading", { name: "Compose MySQL backup retention" })).toBeTruthy();
+ expect(screen.getByText(/logical backups of component mysql recorded under this policy's saved source scope/)).toBeTruthy();
+ await showPreview();
+ fireEvent.click(confirmation());
+ vi.mocked(api.executeRetention).mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce({ ...execution, version });
+ fireEvent.click(await button("Delete selected backup copies"));
+ await screen.findByRole("button", { name: "Retry the same retention request" });
+ const first=vi.mocked(api.executeRetention).mock.calls[0]![2];
+ fireEvent.click(await button("Retry the same retention request"));
+ await screen.findByText(/Accepted retention execution execution/);
+ expect(vi.mocked(api.executeRetention).mock.calls[1]![2]).toBe(first);
+ expect(first).toMatchObject({ preview_id: preview.id, expected_policy_revision: 1, expected_plan_hash: preview.plan_hash });
+});
+
+test("Compose retention source context A to B to A discards unsubmitted deletion consent", async () => {
+ const source_scope = { backup_version: "mysql.compose-logical-local.v1" as const, component: "mysql" };
+ const context: api.RetentionContext = { resource: db.resource, engine: "mysql", source_scope };
+ const version = api.mysqlRetentionVersion;
+ vi.mocked(api.getRetentionPolicy).mockResolvedValue({ ...policy, version, source_scope });
+ vi.mocked(api.createRetentionPreview).mockResolvedValue({ ...preview, version, source_scope });
+ const view=mount(true, false, context);
+ await showPreview();
+ fireEvent.click(confirmation());
+ view.rerender(view.element({ ...context, source_scope: { ...source_scope, component: "other" } }));
+ view.rerender(view.element(context));
+ await button("Preview retention deletion");
+ expect(screen.queryByRole("button", { name: "Delete selected backup copies" })).toBeNull();
+ expect(api.executeRetention).not.toHaveBeenCalled();
+});
+
+
+test("saved Compose MySQL policy can be disabled when the current source is unavailable", async () => {
+ const source_scope = { backup_version: "mysql.compose-logical-local.v1" as const, component: "mysql" };
+ const context: api.RetentionContext = { resource: db.resource, engine: "mysql", source_scope };
+ vi.mocked(api.getRetentionPolicy).mockResolvedValue({ ...policy, version: api.mysqlRetentionVersion, source_scope });
+ mount(true, false, context, false);
+ await screen.findByRole("checkbox", { name: "Retention enabled" });
+ expect((screen.getByRole("button", { name: "Save retention policy" }) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.click(screen.getByRole("checkbox", { name: "Retention enabled" }));
+ fireEvent.click(await button("Save retention policy"));
+ expect(vi.mocked(api.saveRetentionPolicy).mock.calls[0]![2]).toMatchObject({ enabled: false, expected_revision: 1 });
+});
+
+test("Compose retention without a matching saved policy or eligible source does not offer creation", async () => {
+ const context: api.RetentionContext = { resource: db.resource, engine: "mysql", source_scope: { backup_version: "mysql.compose-logical-local.v1", component: "mysql" } };
+ vi.mocked(api.getRetentionPolicy).mockResolvedValue(null);
+ mount(true, false, context, false);
+ await screen.findByText(/Compose MySQL retention is unavailable until/);
+ expect(screen.queryByRole("button", { name: "Save retention policy" })).toBeNull();
+});
+
+test.each(["eligibility", "policy"])("Compose retention %s A to B to A retires unsubmitted deletion consent", async kind => {
+ const source_scope = { backup_version: "mysql.compose-logical-local.v1" as const, component: "mysql" };
+ const context: api.RetentionContext = { resource: db.resource, engine: "mysql", source_scope };
+ const scopedPolicy = { ...policy, version: api.mysqlRetentionVersion, source_scope };
+ vi.mocked(api.getRetentionPolicy).mockResolvedValue(scopedPolicy);
+ vi.mocked(api.createRetentionPreview).mockResolvedValue({ ...preview, version: api.mysqlRetentionVersion, source_scope });
+ const view=mount(true, false, context);
+ await showPreview();
+ fireEvent.click(confirmation());
+ expect((confirmation() as HTMLInputElement).checked).toBe(true);
+ if (kind === "eligibility") {
+  view.rerender(view.element(context, "owner", true, false, false));
+  view.rerender(view.element(context, "owner", true, false, true));
+ } else {
+  vi.mocked(api.getRetentionPolicy).mockResolvedValue({ ...scopedPolicy, revision: 2 });
+  await act(async () => { await view.client.invalidateQueries({ queryKey: api.retentionKey(scope, "database") }); });
+  vi.mocked(api.getRetentionPolicy).mockResolvedValue(scopedPolicy);
+  await act(async () => { await view.client.invalidateQueries({ queryKey: api.retentionKey(scope, "database") }); });
+ }
+ expect((confirmation() as HTMLInputElement).checked).toBe(false);
+ expect((screen.getByRole("button", { name: "Delete selected backup copies" }) as HTMLButtonElement).disabled).toBe(true);
+ expect(api.executeRetention).not.toHaveBeenCalled();
 });

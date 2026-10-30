@@ -1,4 +1,4 @@
-import type { RetentionCopy } from "@/api/hosting-database-backup-retention";
+import type { RetentionContext, RetentionCopy } from "@/api/hosting-database-backup-retention";
 import { readBackupMetadata } from "@/components/hosting/backup-access";
 import { BackupAccessBoundary } from "@/components/hosting/BackupAccessBoundary";
 import type { UseQueryResult } from "@tanstack/react-query";
@@ -26,12 +26,12 @@ import {
   databaseError,
   databaseRequestID,
   type DatabaseScope,
-  type HostingDatabase,
 } from "../api/hosting-databases";
 import { Button } from "../components/ui/button";
 
 type Props = {
-  database: HostingDatabase;
+  database: RetentionContext;
+  sourceEligible?: boolean;
   scope: DatabaseScope;
   owner: boolean;
   blocked: boolean;
@@ -111,6 +111,9 @@ export function DatabaseBackupRetention(props: Props) {
     props.scope.environment,
     props.database.resource.id,
     props.database.resource.generation,
+    props.database.engine,
+    props.database.source_scope?.backup_version,
+    props.database.source_scope?.component,
     props.owner,
     props.blocked,
   ]);
@@ -155,18 +158,21 @@ function RetentionPanel(props: Parameters<typeof useDatabaseRetention>[0]) {
     recovery,
     recoveryCurrent,
     recoveryConfirmed,
+    sourceEligible,
   } = useDatabaseRetention(props);
 
   if (!["postgresql", "mysql"].includes(database.engine)) return null;
   if (denied)
     return <p role="alert">Backup retention access is unavailable.</p>;
+  if (database.source_scope && !sourceEligible && policy.data === null)
+    return <p>Compose MySQL retention is unavailable until a qualified mysql component or a matching saved policy is available.</p>;
   return (
     <section
-      aria-label="Database backup retention"
+      aria-label={database.source_scope ? "Compose MySQL backup retention" : "Database backup retention"}
       className="min-w-0 space-y-3 rounded-xl border p-3"
     >
-      {database.engine === "mysql" ? <p>Native MySQL retention requires hosting_mysql_backup_retention_v1. Local and remote copies have independent limits and execution results.</p> : null}
-      <h4 className="font-medium">{database.engine === "mysql" ? "MySQL" : "PostgreSQL"} backup retention</h4>
+      {database.source_scope ? <p>Compose MySQL retention applies only to logical backups of component {database.source_scope.component} recorded under this policy's saved source scope. It requires hosting_mysql_backup_retention_v1. Local and remote copies have independent limits and execution results.</p> : database.engine === "mysql" ? <p>Native MySQL retention requires hosting_mysql_backup_retention_v1. Local and remote copies have independent limits and execution results.</p> : null}
+      <h4 className="font-medium">{database.source_scope ? "Compose MySQL" : database.engine === "mysql" ? "MySQL" : "PostgreSQL"} backup retention</h4>
       <p>
         Local and remote copies have independent limits. The first reached limit
         selects the oldest eligible copies. Zero means unlimited. Age is
@@ -194,6 +200,7 @@ function RetentionPanel(props: Parameters<typeof useDatabaseRetention>[0]) {
         edit={edit}
         policy={policy}
         setError={setError}
+        sourceEligible={sourceEligible}
       />
       <RetentionPreviewAction
         owner={owner}
@@ -272,12 +279,14 @@ function useDatabaseRetention({
   owner,
   blocked,
   onDenied,
+  sourceEligible,
 }: Props) {
   const client = useQueryClient();
-  const key = retentionKey(scope, database.resource.id);
+  const key = [...retentionKey(scope, database.resource.id), database.engine, database.source_scope ?? null];
   const [editedDraft, setDraft] = useState<Draft>();
   const [preview, setPreview] = useState<RetentionPreview>();
   const [confirmed, setConfirmed] = useState(false);
+  const receivedPolicy = useRef("");
   const [recovery, setRecovery] = useState<RetentionExecution>();
   const [recoveryConfirmed, setRecoveryConfirmed] = useState(false);
   const [attempt, setAttempt] = useState<Attempt>();
@@ -299,7 +308,16 @@ function useDatabaseRetention({
     queryFn: ({ signal }) =>
       readBackupMetadata(
         signal,
-        () => getRetentionPolicy(scope, database, signal),
+        async () => {
+          const out = await getRetentionPolicy(scope, database, signal);
+          const identity = JSON.stringify([out?.revision, out?.resource_generation, out?.source_scope]);
+          if (!attempt && receivedPolicy.current !== identity) {
+            setConfirmed(false);
+            setRecoveryConfirmed(false);
+          }
+          receivedPolicy.current = identity;
+          return out;
+        },
         retireRetentionAccess,
         [401, 403],
       ),
@@ -355,6 +373,13 @@ function useDatabaseRetention({
     policy.data,
     database.resource.generation,
   );
+  const [reviewedPolicy, setReviewedPolicy] = useState("");
+  const policyIdentity = JSON.stringify([policy.data?.revision, policy.data?.resource_generation, policy.data?.source_scope, sourceEligible]);
+  if (!attempt && reviewedPolicy !== policyIdentity) {
+    setReviewedPolicy(policyIdentity);
+    setConfirmed(false);
+    setRecoveryConfirmed(false);
+  }
   const selected = preview?.items.filter((v) => v.selected) ?? [];
   const latestRecovery = history.data?.find((v) => v.id === recovery?.id);
   const recoveryCurrent = Boolean(
@@ -379,6 +404,7 @@ function useDatabaseRetention({
       !owner ||
       blocked ||
       pending ||
+      (attempt && next !== attempt) ||
       !controller ||
       controller.signal.aborted
     )
@@ -497,6 +523,7 @@ function useDatabaseRetention({
     recovery,
     recoveryCurrent,
     recoveryConfirmed,
+    sourceEligible,
   };
 }
 
@@ -511,7 +538,9 @@ function RetentionPolicyEditor({
   edit,
   policy,
   setError,
+  sourceEligible,
 }: {
+  sourceEligible?: boolean;
   owner: boolean;
   draft: Draft | undefined;
   unavailable: boolean;
@@ -522,7 +551,7 @@ function RetentionPolicyEditor({
     | { keep_count: number; keep_days: number; max_bytes: number }
     | undefined;
   submit: (next: Attempt) => Promise<void>;
-  database: import("@/api/hosting-databases").HostingDatabase;
+  database: RetentionContext;
   edit: (next: Draft) => void;
   policy: UseQueryResult<RetentionPolicy | null>;
   setError: React.Dispatch<unknown>;
@@ -533,7 +562,7 @@ function RetentionPolicyEditor({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (unavailable || !local || !remote) return;
+            if (unavailable || !local || !remote || (database.source_scope && !sourceEligible && (!policy.data || draft.enabled))) return;
             void submit({
               kind: "save",
               input: {
@@ -626,7 +655,7 @@ function RetentionPolicyEditor({
           <Button
             className="h-auto max-w-full whitespace-normal"
             type="submit"
-            disabled={unavailable || !local || !remote}
+            disabled={unavailable || !local || !remote || Boolean(database.source_scope && !sourceEligible && (!policy.data || draft.enabled))}
           >
             Save retention policy
           </Button>
