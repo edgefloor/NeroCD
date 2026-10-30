@@ -8,6 +8,7 @@ package sqlcgen
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 const createDatabaseImport = `-- name: CreateDatabaseImport :exec
@@ -46,6 +47,21 @@ func (q *Queries) CreateDatabaseImport(ctx context.Context, arg CreateDatabaseIm
 		arg.PlanHash,
 		arg.Body,
 	)
+	return err
+}
+
+const createDatabaseImportDelivery = `-- name: CreateDatabaseImportDelivery :exec
+INSERT INTO hosting_database_import_deliveries(delivery_id,stage_id,metadata) VALUES($1,$2,$3)
+`
+
+type CreateDatabaseImportDeliveryParams struct {
+	DeliveryID string          `json:"delivery_id"`
+	StageID    string          `json:"stage_id"`
+	Metadata   json.RawMessage `json:"metadata"`
+}
+
+func (q *Queries) CreateDatabaseImportDelivery(ctx context.Context, arg CreateDatabaseImportDeliveryParams) error {
+	_, err := q.db.Exec(ctx, createDatabaseImportDelivery, arg.DeliveryID, arg.StageID, arg.Metadata)
 	return err
 }
 
@@ -111,6 +127,17 @@ func (q *Queries) CreateDatabaseImportStage(ctx context.Context, arg CreateDatab
 		arg.Body,
 	)
 	return err
+}
+
+const databaseImportStageDeadlinePassed = `-- name: DatabaseImportStageDeadlinePassed :one
+SELECT ($1::timestamptz<=clock_timestamp())::boolean
+`
+
+func (q *Queries) DatabaseImportStageDeadlinePassed(ctx context.Context, dollar_1 time.Time) (bool, error) {
+	row := q.db.QueryRow(ctx, databaseImportStageDeadlinePassed, dollar_1)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const dispatchDatabaseImport = `-- name: DispatchDatabaseImport :exec
@@ -385,6 +412,28 @@ func (q *Queries) ReadDatabaseImport(ctx context.Context, id string) (HostingDat
 	return i, err
 }
 
+const readDatabaseImportDelivery = `-- name: ReadDatabaseImportDelivery :one
+SELECT metadata FROM hosting_database_import_deliveries WHERE delivery_id=$1
+`
+
+func (q *Queries) ReadDatabaseImportDelivery(ctx context.Context, deliveryID string) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, readDatabaseImportDelivery, deliveryID)
+	var metadata json.RawMessage
+	err := row.Scan(&metadata)
+	return metadata, err
+}
+
+const readDatabaseImportIntentBody = `-- name: ReadDatabaseImportIntentBody :one
+SELECT body FROM hosting_database_import_receipts WHERE operation_id=$1 AND phase='import_intent'
+`
+
+func (q *Queries) ReadDatabaseImportIntentBody(ctx context.Context, operationID string) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, readDatabaseImportIntentBody, operationID)
+	var body json.RawMessage
+	err := row.Scan(&body)
+	return body, err
+}
+
 const readDatabaseImportReceipt = `-- name: ReadDatabaseImportReceipt :one
 SELECT operation_id, phase, receipt_id, authority, body, body_hash, response, created_at FROM hosting_database_import_receipts WHERE receipt_id=$1
 `
@@ -431,6 +480,22 @@ func (q *Queries) ReadDatabaseImportStage(ctx context.Context, id string) (Hosti
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const readDatabaseImportStageDelivery = `-- name: ReadDatabaseImportStageDelivery :one
+SELECT metadata FROM hosting_database_import_deliveries WHERE delivery_id=$1 AND stage_id=$2
+`
+
+type ReadDatabaseImportStageDeliveryParams struct {
+	DeliveryID string `json:"delivery_id"`
+	StageID    string `json:"stage_id"`
+}
+
+func (q *Queries) ReadDatabaseImportStageDelivery(ctx context.Context, arg ReadDatabaseImportStageDeliveryParams) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, readDatabaseImportStageDelivery, arg.DeliveryID, arg.StageID)
+	var metadata json.RawMessage
+	err := row.Scan(&metadata)
+	return metadata, err
 }
 
 const setDatabaseImport = `-- name: SetDatabaseImport :exec

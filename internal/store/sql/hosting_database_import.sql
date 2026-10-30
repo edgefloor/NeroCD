@@ -48,3 +48,18 @@ SELECT l.* FROM hosting_database_import_stages s JOIN run_leases l ON l.run_id=s
 
 -- name: LockDatabaseImportAuthority :one
 SELECT l.* FROM hosting_database_imports s JOIN run_leases l ON l.run_id=s.run_id JOIN task_runs t ON t.id=l.run_id WHERE s.id=$1 AND s.run_id=$2 AND s.runner_id=$3 AND l.runner_id=$3 AND l.id=$4 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7::boolean OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_import','hosting_operation_id',s.id,'hosting_mode','import','inputs','{}'::jsonb) FOR UPDATE OF l;
+
+-- name: ReadDatabaseImportIntentBody :one
+SELECT body FROM hosting_database_import_receipts WHERE operation_id=$1 AND phase='import_intent';
+
+-- name: ReadDatabaseImportDelivery :one
+SELECT metadata FROM hosting_database_import_deliveries WHERE delivery_id=$1;
+
+-- name: ReadDatabaseImportStageDelivery :one
+SELECT metadata FROM hosting_database_import_deliveries WHERE delivery_id=$1 AND stage_id=$2;
+
+-- name: CreateDatabaseImportDelivery :exec
+INSERT INTO hosting_database_import_deliveries(delivery_id,stage_id,metadata) VALUES($1,$2,$3);
+
+-- name: DatabaseImportStageDeadlinePassed :one
+SELECT ($1::timestamptz<=clock_timestamp())::boolean;

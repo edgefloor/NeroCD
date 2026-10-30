@@ -14,10 +14,11 @@ import (
 type databaseImportHTTPRepository struct {
 	*archiveHTTPRepository
 	store.HostingDatabaseImportRepository
-	stage       domain.HostingDatabaseImportStage
-	operation   domain.HostingDatabaseImportOperation
-	stageInput  domain.HostingDatabaseImportStageInput
-	importInput domain.HostingDatabaseImportInput
+	stage        domain.HostingDatabaseImportStage
+	operation    domain.HostingDatabaseImportOperation
+	stageInput   domain.HostingDatabaseImportStageInput
+	importInput  domain.HostingDatabaseImportInput
+	cleanupInput domain.HostingDatabaseImportStageCleanup
 }
 
 func (r *databaseImportHTTPRepository) RequestDatabaseImportStage(ctx context.Context, id, resource, actor string, in domain.HostingDatabaseImportStageInput) (domain.HostingDatabaseImportStage, error) {
@@ -43,6 +44,12 @@ func (r *databaseImportHTTPRepository) RequestDatabaseImport(ctx context.Context
 func (r *databaseImportHTTPRepository) GetDatabaseImport(ctx context.Context, actor, id string) (domain.HostingDatabaseImportOperation, error) {
 	r.calls++
 	return r.operation, r.authorize(ctx, actor, domain.RoleViewer)
+}
+
+func (r *databaseImportHTTPRepository) AuthorizeDatabaseImportStageCleanup(_ context.Context, _ string, in domain.HostingDatabaseImportStageCleanup) (domain.HostingDatabaseImportStageCleanupResult, error) {
+	r.calls++
+	r.cleanupInput = in
+	return domain.HostingDatabaseImportStageCleanupResult{HostingDatabaseImportStageCleanup: in, Delete: false}, nil
 }
 
 func TestExternalDatabaseImportHTTPRealDecodersAndAuthority(t *testing.T) {
@@ -97,6 +104,18 @@ func TestExternalDatabaseImportHTTPRealDecodersAndAuthority(t *testing.T) {
 	}
 	archiveHTTPCall(t, server, "GET", "/api/v1/database-import-stages/stage", viewer, "", "", 200)
 	archiveHTTPCall(t, server, "GET", "/api/v1/database-imports/import", viewer, "", "", 200)
+	cleanupPath := "/api/v1/runners/hosting/database-import-stage/cleanup"
+	cleanupBody := `{"stage_id":"stage","plan_hash":"sha256:` + strings.Repeat("a", 64) + `","ready_hash":"sha256:` + strings.Repeat("b", 64) + `"}`
+	archiveHTTPCall(t, server, "POST", cleanupPath, owner, cleanupBody, "application/json", 401)
+	archiveHTTPCall(t, server, "POST", cleanupPath, runner, cleanupBody, "application/json", 200)
+	if repo.cleanupInput.StageID != "stage" || repo.cleanupInput.ReadyHash != "sha256:"+strings.Repeat("b", 64) {
+		t.Fatal("cleanup route lost exact immutable identity")
+	}
+	calls := repo.calls
+	archiveHTTPCall(t, server, "POST", cleanupPath, runner, strings.TrimSuffix(cleanupBody, "}")+`,"path":"private"}`, "application/json", 400)
+	if repo.calls != calls {
+		t.Fatal("unknown cleanup field reached authority")
+	}
 	// No extra backup provenance, arbitrary endpoint, or root credential input exists.
 	for _, extra := range []string{`"endpoint":"http://private"`, `"backup_id":"fake"`, `"credentials":{"password":"private"}`} {
 		archiveHTTPCall(t, server, "POST", "/api/v1/resources/"+repo.resource.ID+"/database-import-stages", owner, strings.TrimSuffix(stageBody, "}")+`,`+extra+`}`, "application/json", 400)

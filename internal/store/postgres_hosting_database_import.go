@@ -562,7 +562,7 @@ func (s *PostgresStore) DatabaseImportMutation(ctx context.Context, runner strin
 					return out, ErrConflict
 				}
 				var original domain.HostingDatabaseImportMutation
-				if e = tx.QueryRow(ctx, "SELECT body FROM hosting_database_import_receipts WHERE operation_id=$1 AND phase='import_intent'", iv.ID).Scan(&ready); e != nil || json.Unmarshal(ready, &original) != nil || domain.HostingDocumentHash(original.Writers) != domain.HostingDocumentHash(in.Writers) {
+				if ready, e = q.ReadDatabaseImportIntentBody(ctx, iv.ID); e != nil || json.Unmarshal(ready, &original) != nil || domain.HostingDocumentHash(original.Writers) != domain.HostingDocumentHash(in.Writers) {
 					return out, ErrConflict
 				}
 				iv.State = "uncertain"
@@ -671,10 +671,10 @@ func (s *PostgresStore) AuthorizeDatabaseImportCredentials(ctx context.Context, 
 			Request domain.BackupRemoteCredentialRequest
 		}{runner, in})
 		var raw []byte
-		e = tx.QueryRow(ctx, "SELECT metadata FROM hosting_database_import_deliveries WHERE delivery_id=$1", in.DeliveryID).Scan(&raw)
+		raw, e = sqlcgen.New(tx).ReadDatabaseImportDelivery(ctx, in.DeliveryID)
 		if errors.Is(e, pgx.ErrNoRows) {
 			out.Metadata = domain.BackupRemoteCredentialMetadata{Purpose: domain.HostingDatabaseImportCredentialPurpose, Request: in, RunnerID: runner, RequestHash: hash, UseUntil: expiry}
-			_, e = tx.Exec(ctx, "INSERT INTO hosting_database_import_deliveries(delivery_id,stage_id,metadata) VALUES($1,$2,$3)", in.DeliveryID, p.Stage.ID, buildJSON(out.Metadata))
+			e = sqlcgen.New(tx).CreateDatabaseImportDelivery(ctx, sqlcgen.CreateDatabaseImportDeliveryParams{DeliveryID: in.DeliveryID, StageID: p.Stage.ID, Metadata: buildJSON(out.Metadata)})
 			if e != nil {
 				return out, hostingError(e)
 			}
@@ -706,7 +706,7 @@ func (s *PostgresStore) RevalidateDatabaseImportCredentials(ctx context.Context,
 		}
 		var saved domain.BackupRemoteCredentialMetadata
 		var raw []byte
-		if e = tx.QueryRow(ctx, "SELECT metadata FROM hosting_database_import_deliveries WHERE delivery_id=$1 AND stage_id=$2", in.DeliveryID, in.Authority.OperationID).Scan(&raw); e != nil {
+		if raw, e = sqlcgen.New(tx).ReadDatabaseImportStageDelivery(ctx, sqlcgen.ReadDatabaseImportStageDeliveryParams{DeliveryID: in.DeliveryID, StageID: in.Authority.OperationID}); e != nil {
 			return false, hostingError(e)
 		}
 		if json.Unmarshal(raw, &saved) != nil || saved.Validate() != nil || m.Validate() != nil || m.Purpose != domain.HostingDatabaseImportCredentialPurpose || m.Request != in || m.RunnerID != runner || !time.Now().Before(m.UseUntil) || m.UseUntil.After(expiry) {
@@ -799,7 +799,7 @@ func (s *PostgresStore) AuthorizeDatabaseImportStageCleanup(ctx context.Context,
 			return out, ErrConflict
 		}
 		var expired bool
-		if e = tx.QueryRow(ctx, "SELECT $1::timestamptz<=clock_timestamp()", receipt.ExpiresAt).Scan(&expired); e != nil {
+		if expired, e = q.DatabaseImportStageDeadlinePassed(ctx, receipt.ExpiresAt); e != nil {
 			return out, e
 		}
 		if !expired {

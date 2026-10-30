@@ -4,6 +4,108 @@
  */
 
 export interface paths {
+    "/api/v1/runners/hosting/database-import-stage/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Runner-only external MySQL import authority. Exact current runner and fenced attempt required for effects. Cleanup requires matching owned stage hashes and preserves consumed reservations. Cache-Control: no-store. */
+        post: operations["authorizeDatabaseImportStageCleanup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-import-stage/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Runner-only external MySQL import authority. Exact current runner and fenced attempt required for effects. Cleanup requires matching owned stage hashes and preserves consumed reservations. Cache-Control: no-store. */
+        post: operations["getDatabaseImportStagePlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-import/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Runner-only external MySQL import authority. Exact current runner and fenced attempt required for effects. Cleanup requires matching owned stage hashes and preserves consumed reservations. Cache-Control: no-store. */
+        post: operations["getDatabaseImportPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-import-stage/mutation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Runner-only external MySQL import authority. Exact current runner and fenced attempt required for effects. Cleanup requires matching owned stage hashes and preserves consumed reservations. Cache-Control: no-store. */
+        post: operations["recordDatabaseImportStageMutation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-import/mutation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Runner-only external MySQL import authority. Exact current runner and fenced attempt required for effects. Cleanup requires matching owned stage hashes and preserves consumed reservations. Cache-Control: no-store. */
+        post: operations["recordDatabaseImportMutation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-import-stage/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Runner-only external MySQL import authority. Exact current runner and fenced attempt required for effects. Cleanup requires matching owned stage hashes and preserves consumed reservations. Cache-Control: no-store. */
+        post: operations["deliverDatabaseImportStageCredentials"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/notification-channels": {
         parameters: {
             query?: never;
@@ -5141,6 +5243,76 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingDatabaseImportStageCleanup: {
+            stage_id: string;
+            plan_hash: string;
+            ready_hash?: string;
+        };
+        HostingDatabaseImportStageCleanupResult: {
+            stage_id: string;
+            plan_hash: string;
+            ready_hash?: string;
+            delete: boolean;
+        };
+        HostingDatabaseImportStageFile: {
+            device: number;
+            inode: number;
+            bytes: number;
+        };
+        HostingDatabaseImportStagePlan: {
+            stage: components["schemas"]["HostingDatabaseImportStage"];
+            actor_id: string;
+            project_id: string;
+            runner_id: string;
+            target: components["schemas"]["HostingHealthy"];
+            target_plan: components["schemas"]["HostingApplyPlan"];
+            s3_target: components["schemas"]["HostingDatabaseBackupTargetSnapshot"];
+            /** @enum {integer} */
+            max_bytes: 10737418240;
+            timeout_seconds: number;
+            hash: string;
+        };
+        HostingDatabaseImportReadyReceipt: {
+            stage_id: string;
+            plan_hash: string;
+            source_identity?: components["schemas"]["HostingDatabaseImportSourceIdentity"];
+            source_bytes: number;
+            /** @enum {string} */
+            compression: "plain" | "gzip";
+            blob: components["schemas"]["HostingDatabaseImportBlob"];
+            file: components["schemas"]["HostingDatabaseImportStageFile"];
+            /** Format: date-time */
+            ready_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            hash: string;
+        };
+        HostingDatabaseImportPlan: {
+            operation: components["schemas"]["HostingDatabaseImportOperation"];
+            stage_plan: components["schemas"]["HostingDatabaseImportStagePlan"];
+            receipt: components["schemas"]["HostingDatabaseImportReadyReceipt"];
+            hash: string;
+        };
+        HostingDatabaseImportMutation: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            attempt: number;
+            fence: string;
+            receipt_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            phase: "stage_intent" | "ready" | "stage_failed" | "import_intent" | "complete" | "failed" | "uncertain";
+            daemon_id: string;
+            failure_code?: string;
+            ready?: components["schemas"]["HostingDatabaseImportReadyReceipt"];
+            writers?: components["schemas"]["HostingStorageArchiveWriterState"][];
+            writers_resumed: boolean;
+        };
+        HostingDatabaseImportReceiptResult: {
+            stage?: components["schemas"]["HostingDatabaseImportStage"];
+            import?: components["schemas"]["HostingDatabaseImportOperation"];
+        };
         /** @description Write-only whole configuration, encrypted at rest. Webhook uses only webhook_url; email requires SMTP host/port/security/from and current project member IDs. Username and password must both be supplied or both omitted. No read API returns configuration. */
         NotificationConfiguration: {
             webhook_url?: string;
@@ -10913,6 +11085,186 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    authorizeDatabaseImportStageCleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseImportStageCleanup"];
+            };
+        };
+        responses: {
+            /** @description Exact authorized result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportStageCleanupResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getDatabaseImportStagePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Exact authorized result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportStagePlan"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getDatabaseImportPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Exact authorized result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportPlan"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recordDatabaseImportStageMutation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseImportMutation"];
+            };
+        };
+        responses: {
+            /** @description Exact authorized result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportReceiptResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recordDatabaseImportMutation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseImportMutation"];
+            };
+        };
+        responses: {
+            /** @description Exact authorized result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseImportReceiptResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverDatabaseImportStageCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupRemoteCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Exact authorized result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupRemoteCredentialsWire"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     listNotificationChannels: {
         parameters: {
             query?: never;
