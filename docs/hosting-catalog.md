@@ -107,8 +107,7 @@ controls do not apply to it. Use the application's component controls for
 use the same pinned MySQL component and produce database-only archives. This does
 not restore WordPress media or rewrite URLs. [Compose MySQL immediate remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification)
 accepts a validated S3 target and retries the saved SQL archive. [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification)
-use the same target and artifact checks. Component remote restore, retention,
-upgrades and migration remain outside the qualified workflow.
+use the same target and artifact checks. [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) supports a separate target from a recorded successful upload. Retention, arbitrary S3-path or staged local imports, upgrades and migration remain outside the qualified workflow.
 
 ## Install and deploy
 
@@ -613,3 +612,5 @@ post/full-PNG preservation and held partial-import assertions also passed.
 [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification) passed at `3f451479`: the real due SQL archive retained local success
 through PUT denial, then uploaded through a new transfer without another dump.
 Per-revision target history and the existing scheduled-artifact import remained intact.
+
+[Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) passed at `b36972a8`: the scheduled upload supplied a separate-target import with local CAS absent. A corrupt remote object was rejected before SQL with writers running; the separate partial-SQL case retained stopped writers and target ownership.

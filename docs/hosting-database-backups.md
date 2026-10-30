@@ -88,7 +88,7 @@ retains target ownership and stopped writers; MySQL does not provide the Postgre
 rollback guarantee. [Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 use the same archive/import path. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
 can copy a completed SQL archive to a validated target. [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification)
-use that same upload path. Component remote restore and retention remain unsupported. See the [local qualified scope](#compose-mysql-qualification).
+use that same upload path. [Recorded remote import](#compose-mysql-recorded-remote-import-qualification) recovers a separate target from a successful upload. Component retention, arbitrary S3-path and staged local imports remain unsupported. See the [local qualified scope](#compose-mysql-qualification).
 
 ## Limits and local retention
 
@@ -245,7 +245,7 @@ Qualification covers one Linux arm64, rootful Docker destination and fixture CA.
 That qualification did not cover schedules. [Local Compose MySQL schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 passed later at `4c62e6cf`. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
 passed at `0c5ff34c`; [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification) followed at `3f451479`.
-Component remote restore, retention, engine upgrades,
+Recorded remote import was qualified later at `b36972a8`. Component retention, engine upgrades,
 credential rotation and cross-destination recovery remain open. Historical native
 MySQL and core WordPress qualifications retain their original limits.
 
@@ -292,3 +292,42 @@ Silo and fixture-CA source HTTPS. Remote schedules were qualified separately
 at `3f451479`; see [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification). This immediate-upload proof does not qualify
 remote-only restore, retention, media restoration, URL migration,
 public S3 providers or cross-destination recovery.
+
+## Compose MySQL recorded remote import qualification
+
+At `b36972a8` on 2026-10-30, the browser selected the successful recorded upload
+of the scheduled `mysql_sql` archive and an explicitly acknowledged separate
+MySQL component target. The fixture verified and removed the exact local CAS
+archive before import. The download retained the recorded upload, blob, target
+revision, destination and runner authority. The restored target served the saved
+post and an independent new write; source post/full-PNG preservation passed.
+This does not restore media or migrate URLs.
+
+With local CAS absent again, a deliberately corrupted recorded S3 object failed
+with `object_mismatch`. No SQL import run or intent was created. The restore kept
+target ownership with `uncertain`/`execution_failed`, and target writers remained
+running with their original row. The separate partial-SQL case still held stopped
+writers after DROP succeeded and CREATE was denied. Natural runner exit, exact
+journal authority, no subsequent acquired run, and credential scans passed.
+No physical restart or reimport was attempted.
+
+The shared dispatch barrier now waits for a successful remote download for both
+PostgreSQL and MySQL component restores. Focused real PostgreSQL tests cover that
+ordering, failed-download non-dispatch, local/remote capability denial, replay and
+the populated `0106` to `0107` upgrade. All 107 prior filename versions retained
+their bytes; the new migration gives 108 files across 107 numeric prefixes.
+
+The selected test passed in 190.47 seconds; the gate exited zero after 281.070
+seconds with all eight markers. Browser controls at 320, 390, 430 and 1280 pixels
+and served-asset hashes passed without interception. The [safe evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/b36972a8d519342889a61b366374ad200f0a4374/evidence-index.json)
+retains exact source/build/check associations, the invalid failure-code fixture
+attempt and usage-only Bun commands, followed by their actual passing checks.
+It separates the download-barrier product repair from fixture repair, implementation,
+test execution and review/waiting. Exclusive durations are unknown; the overnight
+gap is not counted as active work. Exact host baselines matched after owned cleanup.
+Qualification 18's original cause remains unclassified.
+
+This covers recorded successful uploads on one Linux arm64 rootful destination,
+trusted-loopback Silo and fixture-CA source HTTPS. Arbitrary S3-path import, staged
+local SQL import, automatic component retention, public S3 providers and
+cross-destination recovery remain outside this qualification.
