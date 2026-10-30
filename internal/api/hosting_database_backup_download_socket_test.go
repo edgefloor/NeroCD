@@ -24,7 +24,7 @@ func TestDatabaseDownloadRealStalledSocketInterruptReleasesCapacity(t *testing.T
 			t.Error("reserve")
 			return
 		}
-		defer broker.remove("session", false)
+		defer func() { broker.remove("session", false); close(joined) }()
 		controller := http.NewResponseController(w)
 		_ = controller.SetReadDeadline(time.Now().Add(time.Minute))
 		interrupted := make(chan struct{})
@@ -40,7 +40,6 @@ func TestDatabaseDownloadRealStalledSocketInterruptReleasesCapacity(t *testing.T
 			t.Error("stalled body unexpectedly complete")
 		}
 		<-interrupted
-		close(joined)
 	}))
 	server.Config.ReadTimeout = 100 * time.Millisecond
 	server.Start()
@@ -63,11 +62,6 @@ func TestDatabaseDownloadRealStalledSocketInterruptReleasesCapacity(t *testing.T
 	case <-joined:
 	case <-time.After(time.Second):
 		t.Fatal("real stalled socket was not interrupted")
-	}
-	// Wait for handler's remove before asserting the later actor can reserve.
-	deadline := time.Now().Add(time.Second)
-	for broker.present("session") && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
