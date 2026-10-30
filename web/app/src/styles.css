@@ -261,13 +261,6 @@ button:disabled {
   }
 }
 
-@layer components {
-  [data-slot="command-input-wrapper"] [data-slot="input-group"]:has(input:focus-visible) {
-    border-color: var(--ring);
-    box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 20%, transparent);
-  }
-}
-
 /* Keep the fallback in its own rule so CSS optimization cannot discard it. */
 .mobile-app-shell {
   min-height: 100vh;
@@ -291,7 +284,7 @@ button:disabled {
     max-width: calc(100vw - 16px);
     isolation: isolate;
     border-radius: 10px;
-    box-shadow: 0 16px 48px rgba(10, 10, 10, 0.24);
+    box-shadow: none;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-top: max(4px, env(safe-area-inset-top));
@@ -379,7 +372,7 @@ input[type="password"] {
   border: 0;
   border-radius: 10px;
   background: var(--background);
-  box-shadow: 0 16px 48px rgba(10, 10, 10, 0.24);
+  box-shadow: none;
 }
 
 .command-dialog-frame > [data-slot="command"] {
@@ -387,4 +380,9 @@ input[type="password"] {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--card);
+}
+
+[data-slot="dialog-overlay"]:has(+ .command-dialog-frame),
+[data-slot="dialog-overlay"]:has(+ .mobile-navigation-drawer) {
+  backdrop-filter: none;
 }
