@@ -3,6 +3,9 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-import-upload-stages"},
+	{Method: http.MethodPut, Path: "/api/v1/database-import-stages/{id}/content"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import-stage/upload-stream"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import-stage/cleanup"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import-stage/plan"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import/plan"},
@@ -460,6 +463,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseBackupTransferPlan
 	case "/api/v1/runners/hosting/database-backup-transfer/mutation":
 		return s.runnerDatabaseBackupTransferMutation
+	case "/api/v1/resources/{id}/database-import-upload-stages":
+		return s.requestDatabaseImportUploadStage
+	case "/api/v1/database-import-stages/{id}/content":
+		return s.uploadDatabaseImportStageContent
+	case "/api/v1/runners/hosting/database-import-stage/upload-stream":
+		return s.runnerDatabaseImportUploadStream
 	case "/api/v1/runners/hosting/database-import-stage/cleanup":
 		return s.runnerDatabaseImportStageCleanup
 	case "/api/v1/runners/hosting/database-import-stage/plan":

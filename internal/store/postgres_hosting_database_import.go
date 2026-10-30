@@ -31,6 +31,9 @@ func externalImportResourceAuthority(ctx context.Context, tx pgx.Tx, actor, reso
 }
 
 func externalImportSourceAuthority(ctx context.Context, tx pgx.Tx, p domain.HostingDatabaseImportStagePlan) error {
+	if p.Stage.Version == domain.HostingDatabaseImportUploadVersion {
+		return p.Validate()
+	}
 	q := sqlcgen.New(tx)
 	current, err := q.LockDatabaseBackupTargetAuthority(ctx, p.S3Target.Target.ID)
 	if err != nil || !current.Enabled || current.ProjectID != p.ProjectID {
@@ -58,6 +61,9 @@ func externalImportSourceAuthority(ctx context.Context, tx pgx.Tx, p domain.Host
 
 func externalImportRunner(ctx context.Context, tx pgx.Tx, runner, mode string) error {
 	capability, kind := domain.HostingDatabaseImportStageCapability, domain.RunTypeDatabaseImportStage
+	if mode == "upload" {
+		capability = domain.HostingDatabaseImportUploadCapability
+	}
 	if mode == "import" {
 		capability, kind = domain.HostingDatabaseImportCapability, domain.RunTypeDatabaseImport
 	}
@@ -163,7 +169,21 @@ func (s *PostgresStore) GetDatabaseImportStage(ctx context.Context, actor, id st
 		if _, err = externalImportResourceAuthority(ctx, tx, actor, r.TargetResourceID, domain.RoleViewer); err != nil {
 			return domain.HostingDatabaseImportStage{}, err
 		}
-		return externalImportStageView(r.Body)
+		r, err = sqlcgen.New(tx).LockDatabaseImportStage(ctx, id)
+		if err != nil {
+			return domain.HostingDatabaseImportStage{}, hostingError(err)
+		}
+		view, err := externalImportStageView(r.Body)
+		if err != nil {
+			return view, err
+		}
+		if view.Version == domain.HostingDatabaseImportUploadVersion && view.State == "queued" && r.RunID == nil && !time.Now().Before(*view.UploadDeadline) {
+			view.State = "failed"
+			view.FailureCode = "stage_expired"
+			view.UpdatedAt = time.Now().UTC()
+			err = sqlcgen.New(tx).SetDatabaseImportStage(ctx, sqlcgen.SetDatabaseImportStageParams{ID: id, Body: buildJSON(view), ReadyReceipt: r.ReadyReceipt})
+		}
+		return view, err
 	})
 }
 
@@ -318,6 +338,14 @@ func externalImportCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingDatab
 	}
 	if err = externalImportSourceAuthority(ctx, tx, p); err != nil {
 		return err
+	}
+	if mode == "import" && p.Stage.Version == domain.HostingDatabaseImportUploadVersion {
+		if err = externalImportRunner(ctx, tx, p.RunnerID, "upload"); err != nil {
+			return err
+		}
+	}
+	if mode == "stage" && p.Stage.Version == domain.HostingDatabaseImportUploadVersion {
+		mode = "upload"
 	}
 	return externalImportRunner(ctx, tx, p.RunnerID, mode)
 }
@@ -768,9 +796,6 @@ func (s *PostgresStore) AuthorizeDatabaseImportStageCleanup(ctx context.Context,
 		if e := externalImportOperationResource(ctx, tx, runner, a); e != nil {
 			return out, e
 		}
-		if e := externalImportRunner(ctx, tx, runner, "stage"); e != nil {
-			return out, e
-		}
 		q := sqlcgen.New(tx)
 		row, e := q.LockDatabaseImportStage(ctx, in.StageID)
 		if e != nil {
@@ -779,6 +804,13 @@ func (s *PostgresStore) AuthorizeDatabaseImportStageCleanup(ctx context.Context,
 		var p domain.HostingDatabaseImportStagePlan
 		if json.Unmarshal(row.Plan, &p) != nil || p.Validate() != nil || p.Hash != in.PlanHash || row.PlanHash != in.PlanHash || p.RunnerID != runner {
 			return out, ErrConflict
+		}
+		mode := "stage"
+		if p.Stage.Version == domain.HostingDatabaseImportUploadVersion {
+			mode = "upload"
+		}
+		if e = externalImportRunner(ctx, tx, runner, mode); e != nil {
+			return out, e
 		}
 		v, e := externalImportStageView(row.Body)
 		if e != nil {

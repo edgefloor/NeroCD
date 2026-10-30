@@ -412,3 +412,50 @@ func removeConsumedExternalImportStage(ctx context.Context, config DatabaseEngin
 	defer func() { _ = h.Close() }()
 	return h.discard()
 }
+
+// discardInterruptedLocalUpload removes only an unpublished owned upload inode.
+// The durable intent remains held; this does not acknowledge or repeat a body.
+func discardInterruptedLocalUpload(ctx context.Context, config DatabaseEngineConfig, p domain.HostingDatabaseImportStagePlan) error {
+	if p.Stage.Version != domain.HostingDatabaseImportUploadVersion || p.Validate() != nil {
+		return databaseImportError("stage_unavailable")
+	}
+	lock, err := config.lock(ctx, "external_import_"+p.Stage.ID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	root, err := openExternalImportRoot(config)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	for _, suffix := range []string{".ready", ".import"} {
+		if _, e := root.Lstat(p.Stage.ID + suffix); e == nil {
+			return nil
+		} else if !errors.Is(e, os.ErrNotExist) {
+			return databaseImportError("stage_unavailable")
+		}
+	}
+	var owner externalImportStageOwner
+	err = externalImportReadDocument(root, p.Stage.ID+".owner", &owner)
+	if err != nil {
+		if _, e := root.Lstat(p.Stage.ID + ".owner"); errors.Is(e, os.ErrNotExist) {
+			return nil
+		}
+		return databaseImportError("stage_unavailable")
+	}
+	if owner.Plan.Validate() != nil || owner.Plan.Hash != p.Hash {
+		return databaseImportError("stage_unavailable")
+	}
+	file, err := root.OpenFile(p.Stage.ID+".sql", os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return databaseImportError("stage_unavailable")
+	}
+	defer func() { _ = file.Close() }()
+	proof, err := externalImportFileProof(file)
+	if err != nil || proof.Device != owner.File.Device || proof.Inode != owner.File.Inode {
+		return databaseImportError("stage_unavailable")
+	}
+	handle := externalImportStageHandle{root: root, lock: lock, file: file, id: p.Stage.ID}
+	return handle.discard()
+}

@@ -193,6 +193,9 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 		if op.Method == http.MethodPost && op.Path == "/api/v1/runners/hosting/storage-backup-download/stream" {
 			requestMediaType = "multipart/form-data"
 		}
+		if op.Method == http.MethodPut && op.Path == "/api/v1/database-import-stages/{id}/content" {
+			requestMediaType = "application/octet-stream"
+		}
 		if op.RequestBody && !op.RequestMediaTypes[requestMediaType] {
 			return fmt.Errorf("%s requestBody does not document %s", key, requestMediaType)
 		}
@@ -206,6 +209,9 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 				responseMediaType := "application/json"
 				if op.Method == http.MethodGet && op.Path == "/api/v1/storage-backups/{id}/archive" && code == "200" {
 					responseMediaType = "application/x-tar"
+				}
+				if op.Method == http.MethodPost && op.Path == "/api/v1/runners/hosting/database-import-stage/upload-stream" && code == "200" {
+					responseMediaType = "application/octet-stream"
 				}
 				if !op.ResponseMediaTypes[code][responseMediaType] {
 					return fmt.Errorf("%s response %s does not document %s content", key, code, responseMediaType)

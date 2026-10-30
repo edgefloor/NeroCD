@@ -8,6 +8,9 @@ import (
 
 // HostingDatabaseImportRepository keeps external input separate from owned backups.
 type HostingDatabaseImportRepository interface {
+	RequestDatabaseImportUploadStage(context.Context, string, string, string, domain.HostingDatabaseImportUploadInput) (domain.HostingDatabaseImportStage, error)
+	DatabaseImportUpload(context.Context, string, string, string, bool) (domain.HostingDatabaseImportStagePlan, domain.HostingDatabaseImportStage, bool, error)
+	RevalidateDatabaseImportUpload(context.Context, string, domain.HostingDatabaseImportStagePlan) error
 	RequestDatabaseImportStage(context.Context, string, string, string, domain.HostingDatabaseImportStageInput) (domain.HostingDatabaseImportStage, error)
 	GetDatabaseImportStage(context.Context, string, string) (domain.HostingDatabaseImportStage, error)
 	RequestDatabaseImport(context.Context, string, string, string, domain.HostingDatabaseImportInput) (domain.HostingDatabaseImportOperation, error)

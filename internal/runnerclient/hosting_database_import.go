@@ -1,10 +1,13 @@
 package runnerclient
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"nerocd/internal/domain"
+	"net/http"
 )
 
 type databaseImportResponse[T any] struct{ value T }
@@ -94,4 +97,55 @@ func (c Client) HostingDatabaseImportStageCleanup(ctx context.Context, in domain
 		return r.value, domain.ErrInvalidDatabaseImport
 	}
 	return r.value, nil
+}
+
+// HostingDatabaseImportUploadStream opens the once-only bounded browser body.
+// Closing the returned body also releases its dedicated protected transport.
+func (c Client) HostingDatabaseImportUploadStream(ctx context.Context, in domain.HostingDatabaseImportUploadStream) (io.ReadCloser, error) {
+	if in.Validate() != nil {
+		return nil, domain.ErrInvalidDatabaseImport
+	}
+	policy, _ := databaseBackupProtectedContext(ctx).Value(databaseTransportKey{}).(DatabaseTransport)
+	secured, closeTransport, err := c.serverReadinessHTTP(ServerReadinessTransport(policy))
+	if err != nil {
+		return nil, err
+	}
+	secured.HTTP.Timeout = 0
+	raw, err := json.Marshal(in)
+	if err != nil {
+		closeTransport()
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Server+"/api/v1/runners/hosting/database-import-stage/upload-stream", bytes.NewReader(raw))
+	if err != nil {
+		closeTransport()
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	response, err := secured.HTTP.Do(req)
+	if err != nil {
+		closeTransport()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, errors.New("local upload stream unavailable")
+	}
+	if response.StatusCode != 200 || response.Header.Get("Content-Type") != "application/octet-stream" {
+		_ = response.Body.Close()
+		closeTransport()
+		return nil, errors.New("local upload stream unavailable")
+	}
+	return &databaseImportUploadBody{ReadCloser: response.Body, release: closeTransport}, nil
+}
+
+type databaseImportUploadBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *databaseImportUploadBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.release()
+	return err
 }

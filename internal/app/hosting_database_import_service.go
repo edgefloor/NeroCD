@@ -137,3 +137,50 @@ func (s *Service) RunnerDatabaseImportStageCleanup(ctx context.Context, in domai
 	}
 	return repo.AuthorizeDatabaseImportStageCleanup(ctx, r.ID, in)
 }
+
+// RequestDatabaseImportUploadStage admits a display-only file description before bytes.
+func (s *Service) RequestDatabaseImportUploadStage(ctx context.Context, resource string, in domain.HostingDatabaseImportUploadInput) (domain.HostingDatabaseImportStage, error) {
+	var zero domain.HostingDatabaseImportStage
+	if in.Validate() != nil {
+		return zero, InvalidInput(domain.ErrInvalidDatabaseImport)
+	}
+	_, actor, err := s.resourceForDestinationRole(ctx, resource, domain.RoleOwner)
+	if err != nil {
+		return zero, err
+	}
+	repo, err := s.databaseImportRepository()
+	if err != nil {
+		return zero, err
+	}
+	id, err := prefixedID("dbis")
+	if err != nil {
+		return zero, err
+	}
+	return repo.RequestDatabaseImportUploadStage(ctx, id, resource, actor.ID, in)
+}
+
+// DatabaseImportUpload authorizes one browser body without holding a transaction open.
+func (s *Service) DatabaseImportUpload(ctx context.Context, id, hash string, begin bool) (domain.HostingDatabaseImportStagePlan, domain.HostingDatabaseImportStage, bool, error) {
+	actor, err := s.CurrentPrincipal(ctx)
+	if err != nil {
+		return domain.HostingDatabaseImportStagePlan{}, domain.HostingDatabaseImportStage{}, false, err
+	}
+	repo, err := s.databaseImportRepository()
+	if err != nil {
+		return domain.HostingDatabaseImportStagePlan{}, domain.HostingDatabaseImportStage{}, false, err
+	}
+	return repo.DatabaseImportUpload(ctx, actor.ID, id, hash, begin)
+}
+
+// RevalidateDatabaseImportUpload checks authority without opening a second body.
+func (s *Service) RevalidateDatabaseImportUpload(ctx context.Context, p domain.HostingDatabaseImportStagePlan) error {
+	actor, err := s.CurrentPrincipal(ctx)
+	if err != nil {
+		return err
+	}
+	repo, err := s.databaseImportRepository()
+	if err != nil {
+		return err
+	}
+	return repo.RevalidateDatabaseImportUpload(ctx, actor.ID, p)
+}

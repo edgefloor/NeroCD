@@ -9,7 +9,7 @@ import (
 )
 
 func hostingDatabaseImportPath(path string) bool {
-	return strings.Contains(path, "/database-import-stages") || strings.Contains(path, "/database-imports")
+	return strings.Contains(path, "/database-import-upload-stages") || strings.Contains(path, "/database-import-stages") || strings.Contains(path, "/database-imports")
 }
 
 func (s *Server) requestDatabaseImportStage(w http.ResponseWriter, r *http.Request) {

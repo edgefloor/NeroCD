@@ -58,12 +58,7 @@ func TestExternalDatabaseImportHTTPRealDecodersAndAuthority(t *testing.T) {
 	now := time.Now().UTC()
 	repo.stage = domain.HostingDatabaseImportStage{ID: "stage", Version: domain.HostingDatabaseImportStageVersion, TargetResourceID: repo.resource.ID, Component: "mysql", ExpectedDeployedOperationID: "deployed", ExpectedResourceGeneration: 1, S3Source: domain.HostingDatabaseImportS3Source{TargetID: "s3", Revision: 1, ObjectKey: "nerocd/operator-import/gzip.data"}, State: "queued", CreatedAt: now, UpdatedAt: now}
 	repo.operation = domain.HostingDatabaseImportOperation{ID: "import", Version: domain.HostingDatabaseImportVersion, StageID: "stage", TargetResourceID: repo.resource.ID, TargetComponent: "mysql", TargetDeployedOperationID: "deployed", State: "queued", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
-	mem := repo.MemoryStore
-	service, e := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
-	if e != nil {
-		t.Fatal(e)
-	}
-	server.app = service
+	setDatabaseImportHTTPRepository(t, server, repo)
 	stageBody := `{"request_id":"stage_request","component":"mysql","expected_deployed_operation_id":"deployed","expected_resource_generation":1,"s3_source":{"target_id":"s3","revision":1,"object_key":"nerocd/operator-import/gzip.data"}}`
 	target := `{"resource_id":"` + repo.resource.ID + `","component":"mysql","expected_deployed_operation_id":"deployed","expected_resource_generation":1,"acknowledge_replacement":true}`
 	importBody := `{"request_id":"import_request","stage_id":"stage","expected_stage_hash":"sha256:` + strings.Repeat("a", 64) + `","component_target":` + target + `}`
@@ -120,4 +115,14 @@ func TestExternalDatabaseImportHTTPRealDecodersAndAuthority(t *testing.T) {
 	for _, extra := range []string{`"endpoint":"http://private"`, `"backup_id":"fake"`, `"credentials":{"password":"private"}`} {
 		archiveHTTPCall(t, server, "POST", "/api/v1/resources/"+repo.resource.ID+"/database-import-stages", owner, strings.TrimSuffix(stageBody, "}")+`,`+extra+`}`, "application/json", 400)
 	}
+}
+
+func setDatabaseImportHTTPRepository(t *testing.T, server *Server, repo *databaseImportHTTPRepository) {
+	t.Helper()
+	mem := repo.MemoryStore
+	service, e := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if e != nil {
+		t.Fatal(e)
+	}
+	server.app = service
 }

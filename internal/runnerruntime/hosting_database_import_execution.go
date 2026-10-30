@@ -167,13 +167,16 @@ func executeDatabaseImportWithEngine(s *attemptSupervisor, j *runner.AttemptJour
 			return finish(nil, "stage_failed", externalImportFailure(err), nil)
 		}
 		defer func() { _ = file.Close() }()
-		remote, err := externalImportRemote(ctx, client, a, sp, *cfg, before)
-		if err != nil {
-			_ = file.discard()
-			return finish(nil, "stage_failed", externalImportFailure(err), nil)
+		var remote *backupRemoteS3
+		if sp.Stage.Version != domain.HostingDatabaseImportUploadVersion {
+			remote, err = externalImportRemote(ctx, client, a, sp, *cfg, before)
+			if err != nil {
+				_ = file.discard()
+				return finish(nil, "stage_failed", externalImportFailure(err), nil)
+			}
+			defer remote.Close()
+			remote.transport.before = before
 		}
-		defer remote.Close()
-		remote.transport.before = before
 		intent, err := record("stage_intent", "", nil)
 		if err != nil {
 			return err
@@ -182,7 +185,26 @@ func executeDatabaseImportWithEngine(s *attemptSupervisor, j *runner.AttemptJour
 			return err
 		}
 		var ready domain.HostingDatabaseImportReadyReceipt
-		result, identity, err := remote.stageExternal(ctx, sp.S3Target.Target.Bucket, sp.Stage.S3Source.ObjectKey, file.file)
+		var result databaseImportStageBytes
+		var identity *domain.HostingDatabaseImportSourceIdentity
+		if sp.Stage.Version == domain.HostingDatabaseImportUploadVersion {
+			uploadCtx, stop := context.WithDeadline(ctx, *sp.Stage.UploadDeadline)
+			body, e := client.HostingDatabaseImportUploadStream(uploadCtx, domain.HostingDatabaseImportUploadStream{HostingAuthority: a, PlanHash: sp.Hash})
+			err = e
+			if err == nil {
+				result, err = inspectExternalSQL(uploadCtx, body, file.file, sp.MaxBytes)
+				closeErr := body.Close()
+				if err == nil {
+					err = closeErr
+				}
+				if err == nil && result.SourceBytes != sp.Stage.UploadSource.Bytes {
+					err = databaseImportError("object_mismatch")
+				}
+			}
+			stop()
+		} else {
+			result, identity, err = remote.stageExternal(ctx, sp.S3Target.Target.Bucket, sp.Stage.S3Source.ObjectKey, file.file)
+		}
 		if err == nil {
 			if before(ctx) != nil {
 				err = databaseImportError("authority_denied")
@@ -283,9 +305,15 @@ func reconcileDatabaseImportJournal(ctx context.Context, c Config, j *runner.Att
 			return errExternalImportHeld
 		}
 		return removeConsumedExternalImportStage(ctx, host, p)
+	}, func(ctx context.Context, p domain.HostingDatabaseImportStagePlan) error {
+		host, err := NewDatabaseEngineConfig(c.Database.StateRoot, c.Database.SecretRoot)
+		if err != nil {
+			return errExternalImportHeld
+		}
+		return discardInterruptedLocalUpload(ctx, host, p)
 	})
 }
-func reconcileDatabaseImportJournalWithCleanup(ctx context.Context, c Config, j *runner.AttemptJournal, cleanup func(context.Context, domain.HostingDatabaseImportPlan) error) error {
+func reconcileDatabaseImportJournalWithCleanup(ctx context.Context, c Config, j *runner.AttemptJournal, cleanup func(context.Context, domain.HostingDatabaseImportPlan) error, discardUpload func(context.Context, domain.HostingDatabaseImportStagePlan) error) error {
 	entries := j.Snapshot().DatabaseImports
 	if len(entries) == 0 {
 		return nil
@@ -297,6 +325,20 @@ func reconcileDatabaseImportJournalWithCleanup(ctx context.Context, c Config, j 
 	client := runnerclient.New(c.Server, c.Token)
 	for _, entry := range entries {
 		if entry.Request.Phase == "stage_intent" || entry.Request.Phase == "import_intent" {
+			if entry.StagePlan != nil && entry.StagePlan.Stage.Version == domain.HostingDatabaseImportUploadVersion {
+				terminal := false
+				for _, saved := range entries {
+					if saved.Request.Phase != "stage_intent" && saved.Request.HostingAuthority == entry.Request.HostingAuthority && saved.Request.PlanHash == entry.Request.PlanHash {
+						terminal = true
+						break
+					}
+				}
+				if !terminal {
+					if discardUpload == nil || discardUpload(ctx, *entry.StagePlan) != nil {
+						return errExternalImportHeld
+					}
+				}
+			}
 			continue
 		}
 		// Persisted terminal evidence can be resent, never execution or a remote GET.

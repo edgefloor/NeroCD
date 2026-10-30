@@ -274,7 +274,7 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if applicationCap != options.ApplicationDatabase || maintenanceCap != options.DatabaseMaintenance || (applicationCap || maintenanceCap) && (!options.Database || !options.DatabaseNetworkCaptureAutomatic || !options.DatabaseUpgrade || !options.RuntimeEnvironment || !imageCap || !releaseCap || !databaseCapable || !storageCapable || !captureCapable || !upgradeCapable || shellCapable || options.DatabaseNetworkCapture) {
 		return "", errors.New("authenticated connected database capabilities do not match explicit configuration")
 	}
-	importCaps := []string{domain.RunTypeDatabaseImportStage, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportStageCapability, domain.HostingDatabaseImportCapability}
+	importCaps := []string{domain.RunTypeDatabaseImportStage, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportStageCapability, domain.HostingDatabaseImportUploadCapability, domain.HostingDatabaseImportCapability}
 	for _, capability := range importCaps {
 		if slices.Contains(result.Capabilities, capability) != options.ExternalDatabaseImports {
 			return "", errors.New("external import capability does not match explicit configuration")

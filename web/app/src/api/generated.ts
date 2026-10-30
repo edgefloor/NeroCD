@@ -546,8 +546,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Inspect external S3 SQL or consume one confirmed immutable MySQL stage
-         * @description Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource, configured S3 destination, credentials, target deployment, runner and capability authority are checked through use. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.
+         * Read a recorded S3 or browser-upload MySQL stage
+         * @description Owner mutates; authorized project viewers read nonsecret state. Cookie mutations require CSRF and exact Origin. Current resource authorization governs historical reads. New S3 inspection checks configured source credentials; browser uploads have no S3 dependency. Target, runner and capability authority are checked before effects. Cache-Control: no-store. No caller filesystem paths, credentials, root SQL, arbitrary endpoint or fabricated backup provenance.
          */
         get: operations["getHostingDatabaseImportStage"];
         put?: never;
@@ -11269,15 +11269,16 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
-            /** @description Body already attempted; current stage, never retry authority */
+            /** @description Prior body attempt returns current stage; a target-authority conflict returns an error envelope, never retry authority */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HostingDatabaseImportUploadStage"];
+                    "application/json": components["schemas"]["HostingDatabaseImportUploadStage"] | components["schemas"]["ErrorResponse"];
                 };
             };
+            412: components["responses"]["Error"];
             413: components["responses"]["Error"];
             429: components["responses"]["Error"];
             503: components["responses"]["Error"];

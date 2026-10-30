@@ -41,6 +41,7 @@ var safeRequestID = regexp.MustCompile(`\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`)
 type Server struct {
 	storageBackupDownloadEnabled bool
 	storageDownloads             storageDownloadBroker
+	databaseImportUploads        databaseImportUploadBroker
 
 	app                                   *app.Service
 	logger                                *slog.Logger
@@ -334,7 +335,7 @@ func (s *Server) securityHeaders(w http.ResponseWriter) {
 }
 
 func requiresJSONDocument(r *http.Request) bool {
-	if r.URL.Path == storageDownloadStreamPath {
+	if r.URL.Path == storageDownloadStreamPath || r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/database-import-stages/") && strings.HasSuffix(r.URL.Path, "/content") {
 		return false
 	}
 	// Webhook bytes must reach HMAC verification before JSON interpretation.

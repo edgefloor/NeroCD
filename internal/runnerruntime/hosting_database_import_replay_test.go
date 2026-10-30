@@ -266,7 +266,7 @@ func TestExternalImportCoordinatorLostAckAndUncertainNeverRepeatSQL(t *testing.T
 			mu.Unlock()
 			err = reconcileDatabaseImportJournalWithCleanup(ctx, Config{Server: server.URL, Token: "token", Database: &config}, j, func(ctx context.Context, plan domain.HostingDatabaseImportPlan) error {
 				return removeConsumedExternalImportStage(ctx, e.host, plan)
-			})
+			}, nil)
 			if partial {
 				if err != errExternalImportHeld || len(j.Snapshot().DatabaseImports) != 2 || e.writersResumed {
 					t.Fatal("partial SQL replay resumed or acknowledged uncertain work")

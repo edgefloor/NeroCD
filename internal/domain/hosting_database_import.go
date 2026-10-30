@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -11,14 +12,16 @@ import (
 
 // External imports have separate authority from platform-created backup archives.
 const (
-	HostingDatabaseImportStageVersion          = "mysql.compose-external-s3-stage.v1"
-	HostingDatabaseImportVersion               = "mysql.compose-external-import.v1"
-	HostingDatabaseImportStageCapability       = "hosting_compose_mysql_import_stage_v1"
-	HostingDatabaseImportCapability            = "hosting_compose_mysql_import_v1"
-	RunTypeDatabaseImportStage                 = "database_import_stage"
-	RunTypeDatabaseImport                      = "database_import"
-	HostingDatabaseImportMaxBytes        int64 = 10 << 30
-	HostingDatabaseImportStageTTL              = time.Hour
+	HostingDatabaseImportUploadVersion          = "mysql.compose-local-upload-stage.v1"
+	HostingDatabaseImportUploadCapability       = "hosting_compose_mysql_import_upload_v1"
+	HostingDatabaseImportStageVersion           = "mysql.compose-external-s3-stage.v1"
+	HostingDatabaseImportVersion                = "mysql.compose-external-import.v1"
+	HostingDatabaseImportStageCapability        = "hosting_compose_mysql_import_stage_v1"
+	HostingDatabaseImportCapability             = "hosting_compose_mysql_import_v1"
+	RunTypeDatabaseImportStage                  = "database_import_stage"
+	RunTypeDatabaseImport                       = "database_import"
+	HostingDatabaseImportMaxBytes         int64 = 10 << 30
+	HostingDatabaseImportStageTTL               = time.Hour
 )
 
 // ErrInvalidDatabaseImport reports a rejected external SQL import document.
@@ -57,6 +60,53 @@ type HostingDatabaseImportStageInput struct {
 // Validate checks inspection input without granting SQL or backup provenance.
 func (in HostingDatabaseImportStageInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.Component != "mysql" || !validRuntimeReferenceID(in.ExpectedDeployedOperationID) || in.ExpectedResourceGeneration < 1 || in.S3Source.Validate() != nil {
+		return ErrInvalidDatabaseImport
+	}
+	return nil
+}
+
+// HostingDatabaseImportUploadSource is display metadata, never a filesystem path.
+type HostingDatabaseImportUploadSource struct {
+	Filename string `json:"filename"`
+	Bytes    int64  `json:"bytes"`
+}
+
+// Validate bounds display metadata without treating the filename as a path.
+func (s HostingDatabaseImportUploadSource) Validate() error {
+	if len(s.Filename) < 1 || len(s.Filename) > 255 || !utf8.ValidString(s.Filename) || strings.ContainsAny(s.Filename, `/\`) || strings.ContainsFunc(s.Filename, unicode.IsControl) || s.Bytes < 1 || s.Bytes > HostingDatabaseImportMaxBytes {
+		return ErrInvalidDatabaseImport
+	}
+	return nil
+}
+
+// HostingDatabaseImportUploadInput admits metadata before any browser bytes are read.
+type HostingDatabaseImportUploadInput struct {
+	RequestID                   string `json:"request_id"`
+	Component                   string `json:"component"`
+	ExpectedDeployedOperationID string `json:"expected_deployed_operation_id"`
+	ExpectedResourceGeneration  int64  `json:"expected_resource_generation"`
+	Filename                    string `json:"filename"`
+	SourceBytes                 int64  `json:"source_bytes"`
+}
+
+// Validate requires the current target fence and a positive bounded file size.
+func (in HostingDatabaseImportUploadInput) Validate() error {
+	if !validRuntimeReferenceID(in.RequestID) || in.Component != "mysql" || !validRuntimeReferenceID(in.ExpectedDeployedOperationID) || in.ExpectedResourceGeneration < 1 {
+		return ErrInvalidDatabaseImport
+	}
+	return (HostingDatabaseImportUploadSource{Filename: in.Filename, Bytes: in.SourceBytes}).Validate()
+}
+
+// HostingDatabaseImportUploadStream claims one currently fenced upload body.
+type HostingDatabaseImportUploadStream struct {
+	HostingAuthority
+	PlanHash string `json:"plan_hash"`
+}
+
+// Validate requires the exact typed stage run and complete fenced attempt.
+func (in HostingDatabaseImportUploadStream) Validate() error {
+	a := in.HostingAuthority
+	if !validRuntimeReferenceID(a.OperationID) || a.RunID != "db_import_stage_"+a.OperationID || !validRuntimeReferenceID(a.LeaseID) || a.Attempt < 1 || a.Attempt > 2147483647 || len(a.Fence) < 1 || len(a.Fence) > 256 || !imageSHA256.MatchString(in.PlanHash) {
 		return ErrInvalidDatabaseImport
 	}
 	return nil
@@ -117,11 +167,39 @@ type HostingDatabaseImportStage struct {
 	ExpiresAt                   *time.Time                           `json:"expires_at,omitempty"`
 	CreatedAt                   time.Time                            `json:"created_at"`
 	UpdatedAt                   time.Time                            `json:"updated_at"`
+	UploadSource                *HostingDatabaseImportUploadSource   `json:"upload_source,omitempty"`
+	UploadHash                  string                               `json:"upload_hash,omitempty"`
+	UploadDeadline              *time.Time                           `json:"upload_deadline,omitempty"`
+}
+
+// MarshalJSON preserves the existing S3 wire bytes while omitting its source for uploads.
+func (s HostingDatabaseImportStage) MarshalJSON() ([]byte, error) {
+	type wire HostingDatabaseImportStage
+	if s.Version != HostingDatabaseImportUploadVersion {
+		return json.Marshal(wire(s))
+	}
+	raw, err := json.Marshal(wire(s))
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	delete(fields, "s3_source")
+	return json.Marshal(fields)
 }
 
 // Validate checks stored state without applying live expiry, so historical replay stays readable.
 func (s HostingDatabaseImportStage) Validate() error {
-	if !databaseImportFileID.MatchString(s.ID) || s.Version != HostingDatabaseImportStageVersion || !validRuntimeReferenceID(s.TargetResourceID) || s.Component != "mysql" || !validRuntimeReferenceID(s.ExpectedDeployedOperationID) || s.ExpectedResourceGeneration < 1 || s.S3Source.Validate() != nil || s.CreatedAt.IsZero() || s.UpdatedAt.Before(s.CreatedAt) || s.SourceIdentity != nil && s.SourceIdentity.Validate() != nil {
+	if s.Version == HostingDatabaseImportUploadVersion {
+		if s.S3Source != (HostingDatabaseImportS3Source{}) || s.SourceIdentity != nil || s.UploadSource == nil || s.UploadSource.Validate() != nil || !imageSHA256.MatchString(s.UploadHash) || s.UploadDeadline == nil || !s.UploadDeadline.After(s.CreatedAt) || s.UploadDeadline.After(s.CreatedAt.Add(time.Hour)) {
+			return ErrInvalidDatabaseImport
+		}
+	} else if s.Version != HostingDatabaseImportStageVersion || s.S3Source.Validate() != nil || s.UploadSource != nil || s.UploadHash != "" || s.UploadDeadline != nil {
+		return ErrInvalidDatabaseImport
+	}
+	if !databaseImportFileID.MatchString(s.ID) || !validRuntimeReferenceID(s.TargetResourceID) || s.Component != "mysql" || !validRuntimeReferenceID(s.ExpectedDeployedOperationID) || s.ExpectedResourceGeneration < 1 || s.CreatedAt.IsZero() || s.UpdatedAt.Before(s.CreatedAt) || s.SourceIdentity != nil && s.SourceIdentity.Validate() != nil {
 		return ErrInvalidDatabaseImport
 	}
 	switch s.State {
@@ -228,11 +306,43 @@ type HostingDatabaseImportStagePlan struct {
 	Hash           string                              `json:"hash"`
 }
 
+// UploadIdentityHash binds upload admission without depending on the final plan hash.
+func (p HostingDatabaseImportStagePlan) UploadIdentityHash() string {
+	p.Hash = ""
+	p.Stage.UploadHash = ""
+	return HostingDocumentHash(p)
+}
+
+// MarshalJSON keeps legacy S3 plans byte-identical and excludes S3 authority for uploads.
+func (p HostingDatabaseImportStagePlan) MarshalJSON() ([]byte, error) {
+	type wire HostingDatabaseImportStagePlan
+	if p.Stage.Version != HostingDatabaseImportUploadVersion {
+		return json.Marshal(wire(p))
+	}
+	raw, err := json.Marshal(wire(p))
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	delete(fields, "s3_target")
+	return json.Marshal(fields)
+}
+
 // Validate requires a real qualified current MySQL target and exact immutable source selection.
 func (p HostingDatabaseImportStagePlan) Validate() error {
+	if p.Stage.Version == HostingDatabaseImportUploadVersion {
+		if HostingDocumentHash(p.S3Target) != HostingDocumentHash(HostingDatabaseBackupTargetSnapshot{}) || p.Stage.UploadHash != p.UploadIdentityHash() {
+			return ErrInvalidDatabaseImport
+		}
+	} else if p.S3Target.Validate() != nil || !p.S3Target.Target.Enabled || p.S3Target.Target.ProjectID != p.ProjectID || p.S3Target.Target.ID != p.Stage.S3Source.TargetID || p.S3Target.Target.Revision != p.Stage.S3Source.Revision {
+		return ErrInvalidDatabaseImport
+	}
 	hash := p.Hash
 	p.Hash = ""
-	if hash != HostingDocumentHash(p) || p.Stage.Validate() != nil || p.Stage.State != "queued" || !validRuntimeReferenceID(p.ActorID) || !validRuntimeReferenceID(p.ProjectID) || !validRuntimeReferenceID(p.RunnerID) || p.RunnerID != p.Target.Snapshot.RunnerID || p.Target.Snapshot.ResourceID != p.Stage.TargetResourceID || p.Target.Snapshot.ResourceGeneration != p.Stage.ExpectedResourceGeneration || p.Target.OperationID != p.Stage.ExpectedDeployedOperationID || p.Target.PlanHash != p.TargetPlan.Hash || p.S3Target.Validate() != nil || !p.S3Target.Target.Enabled || p.S3Target.Target.ProjectID != p.ProjectID || p.S3Target.Target.ID != p.Stage.S3Source.TargetID || p.S3Target.Target.Revision != p.Stage.S3Source.Revision || p.Target.Release.DaemonID == "" || p.MaxBytes != HostingDatabaseImportMaxBytes || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 {
+	if hash != HostingDocumentHash(p) || p.Stage.Validate() != nil || p.Stage.State != "queued" || !validRuntimeReferenceID(p.ActorID) || !validRuntimeReferenceID(p.ProjectID) || !validRuntimeReferenceID(p.RunnerID) || p.RunnerID != p.Target.Snapshot.RunnerID || p.Target.Snapshot.ResourceID != p.Stage.TargetResourceID || p.Target.Snapshot.ResourceGeneration != p.Stage.ExpectedResourceGeneration || p.Target.OperationID != p.Stage.ExpectedDeployedOperationID || p.Target.PlanHash != p.TargetPlan.Hash || p.Target.Release.DaemonID == "" || p.MaxBytes != HostingDatabaseImportMaxBytes || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 {
 		return ErrInvalidDatabaseImport
 	}
 	if _, err := HostingMySQLComponent(p.Target, p.TargetPlan, p.Stage.Component); err != nil {
@@ -266,6 +376,9 @@ type HostingDatabaseImportReadyReceipt struct {
 
 // ValidateFor checks the exact immutable plan, without treating elapsed expiry as invalid history.
 func (r HostingDatabaseImportReadyReceipt) ValidateFor(p HostingDatabaseImportStagePlan) error {
+	if p.Stage.Version == HostingDatabaseImportUploadVersion && (p.Stage.UploadSource == nil || r.SourceBytes != p.Stage.UploadSource.Bytes || r.SourceIdentity != nil || p.Stage.UploadDeadline == nil || r.ReadyAt.After(*p.Stage.UploadDeadline)) {
+		return ErrInvalidDatabaseImport
+	}
 	hash := r.Hash
 	r.Hash = ""
 	if p.Validate() != nil || hash != HostingDocumentHash(r) || r.StageID != p.Stage.ID || r.PlanHash != p.Hash || r.SourceIdentity != nil && r.SourceIdentity.Validate() != nil || r.SourceBytes < 1 || r.SourceBytes > p.MaxBytes || r.Compression != "plain" && r.Compression != "gzip" || r.Blob.Validate() != nil || r.File.Inode == 0 || r.File.Device == 0 || r.File.Bytes != r.Blob.Bytes || r.ReadyAt.Before(p.Stage.CreatedAt) || !r.ExpiresAt.Equal(r.ReadyAt.Add(HostingDatabaseImportStageTTL)) {
