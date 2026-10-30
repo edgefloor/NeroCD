@@ -2,6 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"github.com/getkin/kin-openapi/openapi3"
+	"nerocd/internal/domain"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,4 +133,68 @@ func containsRole(roles []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestRunnerEnrollmentCapabilityAndTagBounds(t *testing.T) {
+	server, _ := newTestServer()
+	admin := createTestSession(t, server)
+	viewer := createTestSessionFor(t, server, "viewer@example.local", "viewer")
+	values := func(prefix string, n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("%s_%02d", prefix, i)
+		}
+		return out
+	}
+	cases := []struct {
+		name       string
+		caps, tags []string
+		token      string
+		ttl, want  int
+	}{
+		{name: "32", caps: values("cap", 32), token: admin, want: 201},
+		{name: "33", caps: values("cap", 33), token: admin, want: 201},
+		{name: "64", caps: values("cap", 64), tags: values("tag", 32), token: admin, want: 201},
+		{name: "65", caps: values("cap", 65), token: admin, want: 400},
+		{name: "tags33", caps: values("cap", 1), tags: values("tag", 33), token: admin, want: 400},
+		{name: "empty", caps: []string{}, token: admin, want: 400},
+		{name: "cap_string64", caps: []string{strings.Repeat("a", 64)}, token: admin, want: 201},
+		{name: "cap_string65", caps: []string{strings.Repeat("a", 65)}, token: admin, want: 400},
+		{name: "tag_string65", caps: values("cap", 1), tags: []string{strings.Repeat("a", 65)}, token: admin, want: 400},
+		{name: "generic_shell", caps: []string{domain.RunTypeComposeDeploy, "shell"}, token: admin, want: 400},
+		{name: "viewer", caps: values("cap", 64), token: viewer, want: 403},
+		{name: "unauthenticated", caps: values("cap", 64), want: 401},
+		{name: "ttl_min", caps: values("cap", 1), token: admin, ttl: 60, want: 201},
+		{name: "ttl_max", caps: values("cap", 1), token: admin, ttl: 3600, want: 201},
+		{name: "ttl_below", caps: values("cap", 1), token: admin, ttl: 59, want: 400},
+		{name: "ttl_above", caps: values("cap", 1), token: admin, ttl: 3601, want: 400},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			input := app.RunnerEnrollmentInput{RunnerID: "runner_bound_" + c.name, RunnerName: "bounded enrollment", Capabilities: c.caps, Tags: c.tags, TTLSeconds: c.ttl}
+			raw, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/runner-enrollments", strings.NewReader(string(raw)))
+			request.Header.Set("Content-Type", "application/json")
+			if c.token != "" {
+				request.Header.Set("Authorization", "Bearer "+c.token)
+			}
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != c.want {
+				t.Fatalf("status%d want%d", response.Code, c.want)
+			}
+		})
+	}
+	doc, err := openapi3.NewLoader().LoadFromFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := doc.Components.Schemas["RunnerEnrollmentInput"].Value
+	caps, tags := input.Properties["capabilities"].Value, input.Properties["tags"].Value
+	if caps.MaxItems == nil || *caps.MaxItems != 64 || tags.MaxItems == nil || *tags.MaxItems != 32 || caps.Items.Value.MaxLength == nil || *caps.Items.Value.MaxLength != 64 {
+		t.Fatal("enrollment schema bounds diverged")
+	}
 }

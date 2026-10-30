@@ -19375,7 +19375,7 @@ components:
         capabilities:
           type: array
           minItems: 1
-          maxItems: 32
+          maxItems: 64
           items: { type: string, maxLength: 64 }
         ttl_seconds: { type: integer, minimum: 60, maximum: 3600, default: 600 }
     RunnerEnrollmentRevokeInput:

@@ -171,7 +171,7 @@ func (s *Service) CreateRunnerEnrollment(ctx context.Context, input RunnerEnroll
 	}
 	tags := normalizeTags(input.Tags)
 	capabilities := normalizeTags(input.Capabilities)
-	if len(tags) > 32 || len(capabilities) == 0 || len(capabilities) > 32 {
+	if len(tags) > 32 || len(capabilities) == 0 || len(capabilities) > 64 {
 		return CreatedRunnerEnrollment{}, InvalidInput(errors.New("runner tags or capabilities are invalid"))
 	}
 	if composeRunnerHasGenericShell(capabilities) {
