@@ -1701,6 +1701,8 @@ const page={waitForResponse:()=>{optionsArmed=true;return Promise.resolve({avail
         capabilities = fixture.split('if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {',1)[1].split("\n\t\t\t\t}",1)[0]
         self.assertIn("domain.HostingDatabaseBackupDownloadCapability", capabilities)
         self.assertIn('"--hosting-database-backup-download"', fixture)
+        server = Path("internal/api/hosting_catalog_runtime_integration_test.go").read_text()
+        self.assertIn('DatabaseBackupDownload: os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true"', server)
 
     def test_wordpress_external_import_uses_explicit_typed_runner_opt_in(self):
         fixture = Path("internal/api/hosting_storage_runtime_integration_test.go").read_text()
