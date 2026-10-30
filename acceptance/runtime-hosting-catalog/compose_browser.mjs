@@ -73,6 +73,18 @@ async function state(expected) {
   }
   throw Error("fixture deadline");
 }
+function selectMySQLRetentionSurvivor(resourceID, backups, executions, transfers, policyRevision, target) {
+  const newestFirst=(a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)||(a.id===b.id?0:a.id<b.id?1:-1);
+  const qualified=backups.filter(b=>b.mode==='backup'&&b.state==='succeeded'&&b.source_resource_id===resourceID&&b.version==='mysql.compose-logical-local.v1'&&b.source_component==='mysql'&&b.blob?.format==='mysql_sql').sort(newestFirst);
+  const newest=qualified[0]?.id;
+  const deleted=new Set(executions.filter(e=>e.resource_id===resourceID&&e.version==='mysql.backup-retention.v1'&&e.state==='succeeded'&&e.policy_revision===policyRevision).flatMap(e=>e.items.filter(i=>i.location==='local'&&['deleted','absent'].includes(i.state)).map(i=>i.backup_id)));
+  for(const backup of qualified){
+    if(backup.id===newest||!deleted.has(backup.id))continue;
+    const upload=transfers.filter(t=>t.mode==='upload'&&t.state==='succeeded'&&t.version==='mysql.logical-s3-transfer.v1'&&t.backup_id===backup.id&&t.target_id===target.target_id&&t.target_revision===target.revision&&t.blob?.format==='mysql_sql'&&t.blob.digest===backup.blob.digest&&t.blob.bytes===backup.blob.bytes).sort(newestFirst)[0];
+    if(upload)return {backup,upload};
+  }
+  return undefined;
+}
 async function report(action, id) {
   const r = await api.post("/__catalog_fixture/report", {
     data: { action, id },
@@ -504,26 +516,46 @@ async function wordpressWorkflow(h, initial) {
   if(retainedLocal.state!=='succeeded'||retainedLocal.ownership_held||JSON.stringify(retainedLocal.blob)!==JSON.stringify(remoteLocal.blob))throw Error('WordPress MySQL upload retry changed retained local backup');
   await expect(remoteHistory).toContainText('Latest remote upload: succeeded.');
   safe.wordpress_mysql_database_remote_same_archive_retry=true;
+  step='wordpress_mysql_database_retention_automatic_policy';
+  const retentionPath='/api/v1/resources/'+resourceID+'/database-backup-retention';
+  const retention=backups.getByRole('region',{name:'Compose MySQL backup retention',exact:true});
+  await retention.getByRole('checkbox',{name:'Retention enabled',exact:true}).check();
+  await retention.getByRole('checkbox',{name:'Automatic retention',exact:true}).check();
+  for(const [label,value] of [['Local backups to keep','1'],['Local days to keep','0'],['Local maximum storage in GiB','0'],['Remote backups to keep','0'],['Remote days to keep','0'],['Remote maximum storage in GiB','0']])await retention.getByRole('textbox',{name:label,exact:true}).fill(value);
+  const automaticPending=page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===retentionPath);
+  await retention.getByRole('button',{name:'Save retention policy',exact:true}).click();
+  const automaticResponse=await automaticPending,automaticInput=automaticResponse.request().postDataJSON();
+  const automaticPolicy=await checkedResponse(automaticResponse,200);
+  if(automaticInput.expected_revision!==0||automaticInput.expected_resource_generation!==sourceComponents.resource_generation||automaticInput.enabled!==true||automaticInput.automatic!==true||automaticInput.local.keep_count!==1||automaticInput.local.keep_days!==0||automaticInput.local.max_bytes!==0||automaticInput.remote.keep_count!==0||automaticInput.remote.keep_days!==0||automaticInput.remote.max_bytes!==0||automaticInput.source_scope!==undefined||automaticPolicy.version!=='mysql.backup-retention.v1'||automaticPolicy.revision!==1||automaticPolicy.source_scope?.backup_version!=='mysql.compose-logical-local.v1'||automaticPolicy.source_scope?.component!=='mysql'||!automaticPolicy.enabled||!automaticPolicy.automatic)throw Error('WordPress MySQL automatic retention authority changed');
+  await expect(retention).toContainText('Saved retention revision '+automaticPolicy.revision+'.');
   const laterID=await checkWordPress('compose_backup');
   await report('database_source_mutated',laterID);
   await state('database_import');await reloadHosting();
+  step='wordpress_mysql_database_retention_survivor';
+  const backupHistory=await checkedResponse(await context.request.get('/api/v1/resources/'+resourceID+'/database-backups'),200);
+  const automaticExecutions=await checkedResponse(await context.request.get(retentionPath+'/executions'),200);
+  const recordedTransfers=[];
+  for(const entry of backupHistory.filter(b=>b.mode==='backup'))recordedTransfers.push(...await checkedResponse(await context.request.get('/api/v1/database-backups/'+entry.id+'/transfers'),200));
+  const survivor=selectMySQLRetentionSurvivor(resourceID,backupHistory,automaticExecutions,recordedTransfers,automaticPolicy.revision,scheduleTarget);
+  if(!survivor)throw Error('WordPress MySQL automatic retention survivor unavailable');
+  safe.wordpress_mysql_database_retention_automatic=true;
   const restorePanel=application.getByRole('region',{name:'Component database backups',exact:true});
   step='wordpress_mysql_import_target_discovery';
   const targetComponents=await checkedResponse(await context.request.get('/api/v1/resources/'+backupState.id+'/database-backup-components'),200);
   if(!targetComponents.available||targetComponents.resource_id===resourceID||!targetComponents.components.some(c=>c.component==='mysql'&&c.engine==='mysql'&&c.major_version===8&&c.running&&c.eligible))throw Error('WordPress import target discovery changed');
   await restorePanel.getByRole('button',{name:'Refresh database backup history',exact:true}).click();
-  await restorePanel.getByRole('combobox',{name:'Backup to restore',exact:true}).selectOption(logicalBackup.id);
-  await restorePanel.getByRole('combobox',{name:'Restore archive source',exact:true}).selectOption(scheduledRetry.id);
+  await restorePanel.getByRole('combobox',{name:'Backup to restore',exact:true}).selectOption(survivor.backup.id);
+  await restorePanel.getByRole('combobox',{name:'Restore archive source',exact:true}).selectOption(survivor.upload.id);
   await restorePanel.getByRole('combobox',{name:'Restore target application',exact:true}).selectOption(backupState.id);
   await restorePanel.getByRole('combobox',{name:'Restore target database component',exact:true}).selectOption('mysql');
   await restorePanel.getByRole('checkbox',{name:'Replace target database and interrupt its writers',exact:true}).check();
   for(const width of [320,390,430,1280]){await page.setViewportSize({width,height:900});await expect(restorePanel).toBeVisible();if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('WordPress MySQL backup controls responsive overflow');}
   safe.wordpress_mysql_database_controls_responsive=true;
   step='wordpress_mysql_import_submit';
-  const importPending=response(page,'/api/v1/database-backups/'+logicalBackup.id+'/restores');
+  const importPending=response(page,'/api/v1/database-backups/'+survivor.backup.id+'/restores');
   await restorePanel.getByRole('button',{name:'Restore database backup',exact:true}).click();
   const importResponse=await importPending,importInput=importResponse.request().postDataJSON(),selected=importInput.component_target;
-  if(selected?.resource_id!==backupState.id||selected.component!=='mysql'||selected.expected_deployed_operation_id!==targetComponents.operation_id||selected.expected_resource_generation!==targetComponents.resource_generation||selected.acknowledge_replacement!==true||importInput.remote_source?.transfer_id!==scheduledRetry.id||importInput.remote_source?.expected_target_revision!==scheduleTarget.revision)throw Error('WordPress exact import authority changed');
+  if(selected?.resource_id!==backupState.id||selected.component!=='mysql'||selected.expected_deployed_operation_id!==targetComponents.operation_id||selected.expected_resource_generation!==targetComponents.resource_generation||selected.acknowledge_replacement!==true||importInput.remote_source?.transfer_id!==survivor.upload.id||importInput.remote_source?.expected_target_revision!==scheduleTarget.revision)throw Error('WordPress exact import authority changed');
   const imported=await checkedResponse(importResponse,202);
   if(imported.target_resource_id!==backupState.id||imported.target_component!=='mysql'||imported.target_deployed_operation_id!==targetComponents.operation_id)throw Error('WordPress import response target changed');
   await report('database_imported',imported.id);
@@ -531,6 +563,45 @@ async function wordpressWorkflow(h, initial) {
   safe.wordpress_mysql_database_backup_import=true;
   safe.wordpress_mysql_database_remote_backup_import=true;
   safe.wordpress_database_only_source_uploads_preserved=true;
+  safe.wordpress_mysql_database_retention_survivor_import=true;
+  step='wordpress_mysql_database_retention_manual_policy';
+  await retention.getByRole('checkbox',{name:'Automatic retention',exact:true}).uncheck();
+  await retention.getByRole('textbox',{name:'Remote backups to keep',exact:true}).fill('1');
+  const manualPolicyPending=page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===retentionPath);
+  await retention.getByRole('button',{name:'Save retention policy',exact:true}).click();
+  const manualPolicyResponse=await manualPolicyPending,manualPolicyInput=manualPolicyResponse.request().postDataJSON();
+  const manualPolicy=await checkedResponse(manualPolicyResponse,200);
+  if(manualPolicyInput.expected_revision!==automaticPolicy.revision||manualPolicyInput.enabled!==true||manualPolicyInput.automatic!==false||manualPolicyInput.local.keep_count!==1||manualPolicyInput.remote.keep_count!==1||manualPolicy.automatic!==false||manualPolicy.revision!==automaticPolicy.revision+1||JSON.stringify(manualPolicy.source_scope)!==JSON.stringify(automaticPolicy.source_scope))throw Error('WordPress MySQL manual retention policy changed');
+  await expect(retention).toContainText('Saved retention revision '+manualPolicy.revision+'.');
+  const previewPending=response(page,retentionPath+'/previews');
+  await retention.getByRole('button',{name:'Preview retention deletion',exact:true}).click();
+  const previewResponse=await previewPending,previewInput=previewResponse.request().postDataJSON();
+  const preview=await checkedResponse(previewResponse,200);
+  const selectedCopies=preview.items.filter(copy=>copy.selected);
+  if(previewInput.expected_policy_revision!==manualPolicy.revision||preview.policy_revision!==manualPolicy.revision||JSON.stringify(preview.source_scope)!==JSON.stringify(manualPolicy.source_scope)||!selectedCopies.some(copy=>copy.location==='remote')||selectedCopies.some(copy=>copy.protected_reasons.length)||!preview.items.some(copy=>copy.protected_reasons.includes('newest')))throw Error('WordPress MySQL retention preview protection changed');
+  const review=retention.getByRole('region',{name:'Retention deletion preview',exact:true});
+  await expect(review).toContainText(preview.id);
+  await expect(review).toContainText(preview.plan_hash);
+  await expect(review).toContainText('newest');
+  for(const width of [320,390,430,1280]){await page.setViewportSize({width,height:900});await expect(review).toBeVisible();if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('WordPress MySQL retention controls responsive overflow');}
+  await review.getByRole('checkbox',{name:/I confirm permanent deletion/}).check();
+  const executePending=response(page,retentionPath+'/executions');
+  await review.getByRole('button',{name:'Delete selected backup copies',exact:true}).click();
+  const executeResponse=await executePending,executeInput=executeResponse.request().postDataJSON();
+  const executed=await checkedResponse(executeResponse,202);
+  if(executeInput.preview_id!==preview.id||executeInput.expected_policy_revision!==manualPolicy.revision||executeInput.expected_plan_hash!==preview.plan_hash||executed.preview_id!==preview.id||executed.policy_revision!==manualPolicy.revision||executed.plan_hash!==preview.plan_hash)throw Error('WordPress MySQL retention execution authority changed');
+  // The UI performs the reviewed execution; this second API submission proves exact replay.
+  const replay=await checkedResponse(await context.request.post(retentionPath+'/executions',{data:executeInput}),202);
+  const batch=items=>items.map(item=>[item.copy_id,item.backup_id,item.location]).sort((a,b)=>a[0].localeCompare(b[0]));
+  if(executed.version!=='mysql.backup-retention.v1'||executed.resource_id!==resourceID||JSON.stringify(batch(executed.items))!==JSON.stringify(batch(selectedCopies))||replay.id!==executed.id||replay.preview_id!==executed.preview_id||replay.policy_revision!==executed.policy_revision||replay.plan_hash!==executed.plan_hash||JSON.stringify(batch(replay.items))!==JSON.stringify(batch(executed.items)))throw Error('WordPress MySQL retention replay changed batch');
+  await expect.poll(async()=>{
+    const history=await checkedResponse(await context.request.get(retentionPath+'/executions'),200);
+    const manual=history.find(entry=>entry.id===executed.id);
+    return manual?.state==='succeeded'&&!manual.reservation_held&&manual.remote_state==='succeeded';
+  },{timeout:30000,intervals:[500,1000,2000]}).toBe(true);
+  await retention.getByRole('button',{name:'Refresh retention history',exact:true}).click();
+  await expect(retention).toContainText('Remote result: succeeded');
+  safe.wordpress_mysql_database_retention_manual_retry=true;
   await report('database_checked',postID);
   const terminal=await state('complete_mysql');
   const held=await checkedResponse(await context.request.get('/api/v1/database-backups/'+terminal.id),200);
