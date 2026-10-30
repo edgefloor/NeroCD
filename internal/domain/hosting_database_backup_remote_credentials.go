@@ -13,10 +13,11 @@ import (
 // ErrBackupRemoteCredentials reports unavailable or invalid remote backup credentials.
 var ErrBackupRemoteCredentials = errors.New("remote backup credentials unavailable")
 
-// HostingStorageBackupRetentionCredentialPurpose identifies credentials issued for storage backup
-// retention.
+// HostingDatabaseImportCredentialPurpose identifies credentials issued for external SQL staging.
 const HostingDatabaseImportCredentialPurpose = "hosting_mysql_external_stage_credentials.v1"
 
+// HostingStorageBackupRetentionCredentialPurpose identifies credentials issued for storage backup
+// retention.
 const HostingStorageBackupRetentionCredentialPurpose = "hosting_storage_backup_retention_credentials.v1"
 
 // HostingDatabaseBackupRetentionCredentialPurpose identifies credentials issued for database

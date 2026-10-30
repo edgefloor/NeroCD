@@ -120,15 +120,16 @@ func testBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T, v
 			}))
 			defer server.Close()
 			err = reconcileDatabaseBackupRetentionJournal(t.Context(), Config{Server: server.URL, Token: "synthetic", Database: &DatabaseExecutionConfig{BackupRetention: true, TrustedLoopbackHTTP: true}}, j)
-			if mode == "committed_result" {
+			switch mode {
+			case "committed_result":
 				if err != nil || mutations != 1 || retirements != 0 || j.Depth() != 0 {
 					t.Fatalf("committed replay: mutation=%d retirement=%d depth=%d err=%v", mutations, retirements, j.Depth(), err)
 				}
-			} else if mode == "foreign_engine_response" {
+			case "foreign_engine_response":
 				if err == nil || mutations != 1 || j.Depth() != 2 {
 					t.Fatal("foreign engine response retired exact journal evidence")
 				}
-			} else {
+			default:
 				if mutations != 0 || retirements != 1 || j.Depth() != 1 {
 					t.Fatal("unpaired intent mutated or lost")
 				}
