@@ -709,6 +709,15 @@ func backupRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingData
 		return ErrConflict
 	}
 	for _, c := range p.Copies {
+		if c.Local != nil {
+			active, err := sqlcgen.New(tx).DatabaseDownloadActive(ctx, p.RunnerID)
+			if err != nil {
+				return err
+			}
+			if active {
+				return ErrConflict
+			}
+		}
 		original, e := sqlcgen.New(tx).ReadDatabaseBackup(ctx, c.Item.BackupID)
 		if e != nil {
 			return hostingError(e)

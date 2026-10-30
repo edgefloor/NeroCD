@@ -347,7 +347,7 @@ func (in HostingDatabaseBackupTransferMutation) Validate() error {
 // ValidateDatabaseBackupTransferTask checks the database backup transfer task contract.
 func ValidateDatabaseBackupTransferTask(r TaskRun) error {
 	s := r.RunSpec
-	if s.Type != RunTypeDatabaseBackupTransfer || !validRuntimeReferenceID(s.HostingOperationID) || r.ID != "db_transfer_"+s.HostingOperationID || (s.HostingMode != "validate" && s.HostingMode != "upload" && s.HostingMode != "download") || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(r.Workflow.Steps) != 0 {
+	if s.Type != RunTypeDatabaseBackupTransfer || !validRuntimeReferenceID(s.HostingOperationID) || r.ID != "db_transfer_"+s.HostingOperationID || (s.HostingMode != "validate" && s.HostingMode != "upload" && s.HostingMode != "download" && s.HostingMode != HostingDatabaseBackupDownloadMode) || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(r.Workflow.Steps) != 0 {
 		return ErrInvalidDatabaseBackupRemote
 	}
 	return nil

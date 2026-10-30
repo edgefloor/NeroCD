@@ -566,6 +566,12 @@ func (s *PostgresStore) CompleteLeaseRequest(ctx context.Context, leaseID string
 	if err != nil {
 		return domain.RunLease{}, err
 	}
+	if !downloadCompletion && err == nil {
+		downloadCompletion, err = completeDatabaseDownloadMetadata(ctx, tx, runID, runnerID, domain.HostingAuthority{RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence}, status)
+	}
+	if err != nil {
+		return domain.RunLease{}, err
+	}
 	if downloadCompletion {
 		if workflowState != nil || runStatus != status {
 			return domain.RunLease{}, ErrConflict

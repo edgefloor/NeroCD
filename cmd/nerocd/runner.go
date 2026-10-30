@@ -71,6 +71,7 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 	hostingDatabaseMaintenance := fs.Bool("hosting-database-membership-maintenance", false, "explicitly enable member-preserving database replacement")
 	hostingDatabaseUpgrade := fs.Bool("hosting-database-network-upgrade", false, "explicitly enable existing-volume empty database network upgrades")
 	hostingDatabase := fs.Bool("hosting-database", false, "explicitly enable private database execution on a qualified native Linux arm64 host")
+	databaseDownloads := fs.Bool("hosting-database-backup-download", false, "enable one-use local database backup browser downloads")
 	storageDownloads := fs.Bool("hosting-storage-backup-download", false, "enable local archive streaming through one explicitly configured controller")
 	storageArchiveFile := fs.String("storage-archive-config-file", "", "explicit owned mode0600 qualified native helper configuration; storage archive execution is disabled when absent")
 	backupRetention := fs.Bool("hosting-database-backup-retention", false, "enable fenced exact-copy local and remote backup retention")
@@ -158,6 +159,12 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 	archiveConfig, err := loadRunnerStorageArchiveConfig(*storageArchiveFile, *execute, *completeStatus)
 	if err != nil {
 		return err
+	}
+	if *databaseDownloads {
+		if databaseConfig == nil || *journalDir == "" {
+			return errors.New("database downloads require database execution and durable journal")
+		}
+		databaseConfig.BackupDownloads = true
 	}
 	if *storageDownloads && archiveConfig == nil {
 		return errors.New("archive downloads require qualified storage archive configuration")
@@ -290,6 +297,10 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 		}
 	}
 	registrationCapabilities, err = runnerDatabaseCapabilities(*hostingDatabase, capabilitiesSpecified || proxyConfig.Enabled() || buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv || *hostingObservation || *hostingRuntimeLogs, registrationCapabilities)
+	if err != nil {
+		return err
+	}
+	registrationCapabilities, err = runnerDatabaseDownloadCapabilities(*databaseDownloads, registrationCapabilities)
 	if err != nil {
 		return err
 	}
@@ -468,7 +479,7 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{ExternalDatabaseImports: *externalImports, StorageBackupDownloads: *storageDownloads, StorageBackupRetention: archiveConfig != nil && archiveConfig.BackupRetention, DatabaseBackupRetention: *backupRetention, RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, RemoteStorageBackups: archiveConfig != nil && archiveConfig.RemoteBackups, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, ComposeBuild: buildConfig != nil && buildConfig.Compose, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RegistryPull: *hostingRegistryPull, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{DatabaseBackupDownloads: *databaseDownloads, ExternalDatabaseImports: *externalImports, StorageBackupDownloads: *storageDownloads, StorageBackupRetention: archiveConfig != nil && archiveConfig.BackupRetention, DatabaseBackupRetention: *backupRetention, RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, RemoteStorageBackups: archiveConfig != nil && archiveConfig.RemoteBackups, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, ComposeBuild: buildConfig != nil && buildConfig.Compose, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RegistryPull: *hostingRegistryPull, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}

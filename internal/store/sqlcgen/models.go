@@ -512,6 +512,20 @@ type HostingDatabaseBackupCopy struct {
 	SupersededByCopyID *string         `json:"superseded_by_copy_id"`
 }
 
+type HostingDatabaseBackupDownload struct {
+	ID        string          `json:"id"`
+	BackupID  string          `json:"backup_id"`
+	ActorID   string          `json:"actor_id"`
+	RunnerID  string          `json:"runner_id"`
+	RunID     string          `json:"run_id"`
+	Plan      json.RawMessage `json:"plan"`
+	PlanHash  string          `json:"plan_hash"`
+	ExpiresAt time.Time       `json:"expires_at"`
+	State     string          `json:"state"`
+	Authority []byte          `json:"authority"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
 type HostingDatabaseBackupReceipt struct {
 	OperationID string          `json:"operation_id"`
 	Phase       string          `json:"phase"`

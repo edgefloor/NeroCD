@@ -53,6 +53,7 @@ type runtimeConfig struct {
 
 func runServer(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	databaseDownloads := fs.Bool("hosting-database-backup-download", false, "enable single-controller local database backup download rendezvous")
 	storageDownloads := fs.Bool("hosting-storage-backup-download", false, "enable single-controller local archive download rendezvous")
 	addr := fs.String("addr", ":8080", "listen address")
 	backupBytes := fs.Int64("database-backup-max-bytes", domain.HostingDatabaseBackupMaxBytes, "operator limit for each local hosted PostgreSQL logical dump")
@@ -69,6 +70,9 @@ func runServer(args []string) error {
 		return err
 	}
 
+	if *databaseDownloads && cfg.databaseURL == "" {
+		return errors.New("database downloads require PostgreSQL")
+	}
 	if *storageDownloads && (cfg.databaseURL == "" || cfg.hostingStorageArchivePolicy == nil) {
 		return errors.New("archive downloads require PostgreSQL and qualified archive policy")
 	}
@@ -95,7 +99,7 @@ func runServer(args []string) error {
 			}
 		}
 	}()
-	server := api.NewServerWithConfig(service, logger, web.Static(), api.ServerConfig{StorageBackupDownload: *storageDownloads, AllowInsecureCookies: !cfg.cookieSecure, PublicOrigin: cfg.publicOrigin, TrustedProxyCIDRs: cfg.trustedProxyCIDRs})
+	server := api.NewServerWithConfig(service, logger, web.Static(), api.ServerConfig{DatabaseBackupDownload: *databaseDownloads, StorageBackupDownload: *storageDownloads, AllowInsecureCookies: !cfg.cookieSecure, PublicOrigin: cfg.publicOrigin, TrustedProxyCIDRs: cfg.trustedProxyCIDRs})
 
 	if cfg.databaseURL == "" {
 		logger.Warn("server using in-memory store; set NEROCD_DATABASE_URL for durable runtime state")

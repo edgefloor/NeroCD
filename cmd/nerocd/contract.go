@@ -190,7 +190,7 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 			return fmt.Errorf("%s mutates state but is missing requestBody", key)
 		}
 		requestMediaType := "application/json"
-		if op.Method == http.MethodPost && op.Path == "/api/v1/runners/hosting/storage-backup-download/stream" {
+		if op.Method == http.MethodPost && (op.Path == "/api/v1/runners/hosting/storage-backup-download/stream" || op.Path == "/api/v1/runners/hosting/database-backup-download/stream") {
 			requestMediaType = "multipart/form-data"
 		}
 		if op.Method == http.MethodPut && op.Path == "/api/v1/database-import-stages/{id}/content" {
@@ -209,6 +209,9 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 				responseMediaType := "application/json"
 				if op.Method == http.MethodGet && op.Path == "/api/v1/storage-backups/{id}/archive" && code == "200" {
 					responseMediaType = "application/x-tar"
+				}
+				if op.Method == http.MethodGet && op.Path == "/api/v1/database-backups/{id}/archive" && code == "200" {
+					responseMediaType = "application/octet-stream"
 				}
 				if op.Method == http.MethodPost && op.Path == "/api/v1/runners/hosting/database-import-stage/upload-stream" && code == "200" {
 					responseMediaType = "application/octet-stream"

@@ -1895,6 +1895,9 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 	if run.RunSpec.Type == domain.RunTypeDatabaseImportStage || run.RunSpec.Type == domain.RunTypeDatabaseImport {
 		return s.databaseImportClaimAllowed(ctx, tx, run, runnerID)
 	}
+	if run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer && run.RunSpec.HostingMode == domain.HostingDatabaseBackupDownloadMode {
+		return s.databaseDownloadClaimAllowed(ctx, tx, run, runnerID)
+	}
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
 		return s.databaseBackupTransferClaimAllowed(ctx, tx, run, runnerID)
 	}

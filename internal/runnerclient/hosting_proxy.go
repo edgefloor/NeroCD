@@ -70,6 +70,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 type RuntimeExecutionOptions struct {
 	ExternalDatabaseImports bool
 	StorageBackupDownloads  bool
+	DatabaseBackupDownloads bool
 
 	RegistryPull                                                                                                                 bool
 	StorageBackupRetention                                                                                                       bool
@@ -291,12 +292,16 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if retentionCap != options.DatabaseBackupRetention || retentionTask != options.DatabaseBackupRetention || retentionCap && (!options.RemoteDatabaseBackups || !options.LogicalDatabaseBackups || !options.Database || shellCapable) {
 		return "", errors.New("authenticated retention capability does not match explicit configuration")
 	}
+	dbDownload := slices.Contains(result.Capabilities, domain.HostingDatabaseBackupDownloadCapability)
+	if dbDownload != options.DatabaseBackupDownloads || dbDownload && (!options.Database || shellCapable) {
+		return "", errors.New("database download capability requires explicit database execution")
+	}
 	remoteCap, remoteTask := false, false
 	for _, capability := range result.Capabilities {
 		remoteCap = remoteCap || capability == domain.HostingDatabaseBackupRemoteCapability
 		remoteTask = remoteTask || capability == domain.RunTypeDatabaseBackupTransfer
 	}
-	if remoteCap != options.RemoteDatabaseBackups || remoteTask != options.RemoteDatabaseBackups || remoteCap && (!options.LogicalDatabaseBackups || !options.Database || shellCapable) {
+	if remoteCap != options.RemoteDatabaseBackups || remoteTask != (options.RemoteDatabaseBackups || options.DatabaseBackupDownloads) || remoteCap && (!options.LogicalDatabaseBackups || !options.Database || shellCapable) {
 		return "", errors.New("authenticated remote backup capability does not match explicit configuration")
 	}
 	for _, capability := range result.Capabilities {

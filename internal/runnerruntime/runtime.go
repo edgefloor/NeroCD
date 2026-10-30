@@ -539,7 +539,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 			return errors.New("invalid or unconfigured external import task")
 		}
 	} else if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
-		if options.database == nil || !options.database.RemoteBackups || domain.ValidateDatabaseBackupTransferTask(claim.Run) != nil {
+		if options.database == nil || (claim.Run.RunSpec.HostingMode == domain.HostingDatabaseBackupDownloadMode && !options.database.BackupDownloads) || (claim.Run.RunSpec.HostingMode != domain.HostingDatabaseBackupDownloadMode && !options.database.RemoteBackups) || domain.ValidateDatabaseBackupTransferTask(claim.Run) != nil {
 			return errors.New("invalid or unconfigured remote backup task")
 		}
 	} else if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup {
@@ -663,6 +663,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return executeDatabaseImportClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
+		if claim.Run.RunSpec.HostingMode == domain.HostingDatabaseBackupDownloadMode {
+			return executeDatabaseBackupDownloadClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.database)
+		}
 		return executeDatabaseBackupTransferClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup {

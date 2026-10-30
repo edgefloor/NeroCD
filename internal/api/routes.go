@@ -3,6 +3,10 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/database-backups/{id}/archive-options"},
+	{Method: http.MethodGet, Path: "/api/v1/database-backups/{id}/archive"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-download/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-download/stream"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-import-upload-stages"},
 	{Method: http.MethodPut, Path: "/api/v1/database-import-stages/{id}/content"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import-stage/upload-stream"},
@@ -518,6 +522,14 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingStorageBackupVolumes
 	case "/api/v1/resources/{id}/storage-backups":
 		return s.hostingStorageBackups
+	case "/api/v1/database-backups/{id}/archive-options":
+		return s.databaseBackupDownloadOptions
+	case "/api/v1/database-backups/{id}/archive":
+		return s.databaseBackupDownload
+	case "/api/v1/runners/hosting/database-backup-download/plan":
+		return s.runnerDatabaseBackupDownloadPlan
+	case "/api/v1/runners/hosting/database-backup-download/stream":
+		return s.runnerDatabaseBackupDownloadStream
 	case "/api/v1/storage-backups/{id}/archive-options":
 		return s.storageBackupDownloadOptions
 	case "/api/v1/storage-backups/{id}/archive":

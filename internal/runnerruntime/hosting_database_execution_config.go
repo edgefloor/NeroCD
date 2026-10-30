@@ -21,6 +21,7 @@ type DatabaseExecutionConfig struct {
 	MembershipMaintenance bool
 	BackupRetention       bool
 	LogicalBackups        bool
+	BackupDownloads       bool
 	ExternalImports       bool
 	RemoteBackups         bool
 	RemoteEndpoints       []string
@@ -44,6 +45,9 @@ func validateDatabaseExecutionConfig(c Config) error {
 	}
 	if c.Database == nil {
 		return nil
+	}
+	if c.Database.BackupDownloads && (c.JournalDir == "" || c.Token == "") {
+		return errors.New("database downloads require durable journal and authentication")
 	}
 	if c.Database.ExternalImports && (c.RuntimeEnvironment == nil || c.JournalDir == "" || c.Token == "") {
 		return errors.New("external imports require protected runtime delivery and durable journal")
