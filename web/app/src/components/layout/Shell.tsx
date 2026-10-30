@@ -70,11 +70,11 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   };
 
   const navigation = (label: string, iconOnly = false) => (
-    <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto px-2 py-3" aria-label={label}>
+    <nav className="min-h-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-2 py-3" aria-label={label}>
       {navigationGroups.map((group) => {
         const grouped = items.filter((item) => item.group === group);
         if (!grouped.length) return null;
-        return <div key={group}><p className="sidebar-label mb-1 h-4 shrink-0 whitespace-nowrap px-2 text-xs font-normal text-muted-foreground" aria-hidden={iconOnly}>{group}</p>
+        return <div key={group}><p className="sidebar-label mb-1 h-4 shrink-0 overflow-hidden whitespace-nowrap px-2 text-xs font-normal text-muted-foreground" aria-hidden={iconOnly}>{group}</p>
           <div className="space-y-0.5">{grouped.map((item) => <NavButton key={item.key} item={item} iconOnly={iconOnly} active={view === item.key} onClick={() => { setView(item.key); setMobileMenuOpen(false); }} />)}</div>
         </div>;
       })}

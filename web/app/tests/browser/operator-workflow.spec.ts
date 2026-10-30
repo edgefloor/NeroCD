@@ -711,6 +711,7 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
   await expect(page.getByRole("button", { name: "Expand sidebar", exact: true })).toBeFocused();
   await expect.poll(() => page.locator(".desktop-navigation-sidebar").evaluate((element) => element.getBoundingClientRect().width)).toBe(48);
   const rail = page.getByRole("navigation", { name: "Desktop navigation" });
+  expect(await rail.evaluate((element) => ({ content: element.scrollWidth, viewport: element.clientWidth }))).toEqual({ content: 48, viewport: 48 });
   await expect(rail.getByRole("link", { name: "Projects", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(rail.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("title", "Settings");
   await expect(page.getByRole("button", { name: "Search navigation", exact: true })).toBeVisible();
