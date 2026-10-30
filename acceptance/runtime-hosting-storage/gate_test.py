@@ -1406,6 +1406,38 @@ class WordPressModeContractTests(unittest.TestCase):
                 result = subprocess.run(["/bin/bash", str(gate), mode], env=env, capture_output=True, text=True, check=True)
                 self.assertEqual(result.stdout.splitlines(), ["acceptance/runtime-hosting-storage/gate.sh", mode])
 
+    def test_wordpress_retention_survivor_joins_multiple_deletions_and_successful_uploads(self):
+        browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
+        helper = "function selectMySQLRetentionSurvivor(" + browser.split("function selectMySQLRetentionSurvivor(", 1)[1].split("async function report(", 1)[0]
+        script = helper + r"""
+const target={target_id:'target',revision:2};
+const backups=[1,2,3,4].map(n=>({id:'backup'+n,created_at:'2026-10-30T10:00:0'+n+'Z',mode:'backup',state:'succeeded',source_resource_id:'source',source_component:'mysql',version:'mysql.compose-logical-local.v1',blob:{format:'mysql_sql',digest:'sha256:'+String(n<3?1:n).repeat(64),bytes:100+n}}));
+const executions=[{resource_id:'source',version:'mysql.backup-retention.v1',state:'succeeded',policy_revision:1,items:backups.map(b=>({backup_id:b.id,location:'local',state:'deleted'}))}];
+const transfers=backups.map(b=>({id:'upload'+b.id,created_at:b.created_at,mode:'upload',state:'succeeded',version:'mysql.logical-s3-transfer.v1',backup_id:b.id,target_id:'target',target_revision:2,blob:b.blob}));
+const choose=(es=executions,ts=transfers,bs=backups)=>selectMySQLRetentionSurvivor('source',bs,es,ts,1,target)?.backup.id??null;
+console.log(JSON.stringify([
+ choose(),
+ choose(executions,transfers.filter(t=>t.backup_id!=='backup3')),
+ choose([{...executions[0],policy_revision:2}]),
+ choose(executions,transfers.map(t=>({...t,target_revision:3}))),
+ choose(executions,transfers.map(t=>({...t,state:'failed'}))),
+ choose([{...executions[0],state:'failed'}]),
+ choose(executions,transfers,backups.map(b=>({...b,source_component:'other'}))),
+ choose(executions,transfers.map(t=>t.backup_id==='backup3'?({...t,blob:{...t.blob,digest:'sha256:'+'f'.repeat(64)}}):t))
+]));
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True, timeout=5)
+        self.assertEqual(json.loads(result.stdout), ["backup3", "backup2", None, None, None, None, None, "backup2"])
+
+    def test_wordpress_retention_uses_existing_explicit_runner_opt_in(self):
+        fixture = Path("internal/api/hosting_storage_runtime_integration_test.go").read_text()
+        capabilities = fixture.split('if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {', 1)[1].split("\n\t\t\t\t}", 1)[0]
+        self.assertIn("domain.RunTypeDatabaseBackupRetention", capabilities)
+        self.assertIn("domain.HostingDatabaseMySQLBackupRetentionCapability", capabilities)
+        self.assertIn('"--hosting-database-backup-retention", "--hosting-database-remote-backups"', fixture)
+        cli = Path("cmd/nerocd/runner.go").read_text()
+        self.assertIn('fs.Bool("hosting-database-backup-retention", false', cli)
+
     def test_wordpress_schedule_retry_waits_for_first_response(self):
         browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
         response = browser.split("const response =", 1)[1].split("const appOrigin", 1)[0]
@@ -1494,9 +1526,9 @@ console.log(JSON.stringify({status:safe.checked_response_status,sent}));
         validator = source.split("<<'COMPOSE_BROWSER_PASS'\n",1)[1].split("\nCOMPOSE_BROWSER_PASS",1)[0]
         healthy=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved"]
         for mysql in [False,True]:
-            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held","wordpress_mysql_database_schedule_due","wordpress_mysql_database_schedule_retry","wordpress_mysql_database_schedule_edit_disable","wordpress_mysql_database_schedule_history","wordpress_mysql_database_remote_backup","wordpress_mysql_database_remote_failure_local_success","wordpress_mysql_database_remote_same_archive_retry","wordpress_mysql_database_remote_schedule_same_archive_retry","wordpress_mysql_database_remote_backup_import"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
+            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held","wordpress_mysql_database_schedule_due","wordpress_mysql_database_schedule_retry","wordpress_mysql_database_schedule_edit_disable","wordpress_mysql_database_schedule_history","wordpress_mysql_database_remote_backup","wordpress_mysql_database_remote_failure_local_success","wordpress_mysql_database_remote_same_archive_retry","wordpress_mysql_database_remote_schedule_same_archive_retry","wordpress_mysql_database_remote_backup_import","wordpress_mysql_database_retention_automatic","wordpress_mysql_database_retention_survivor_import","wordpress_mysql_database_retention_manual_retry"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
             test="TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS" if mysql else "TestHostingCatalogWordPressCompiledRunnerHTTPS"
-            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS","COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
+            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS","COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_AUTOMATIC_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_MANUAL_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_SURVIVOR_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
             for kind in ["valid","missing","false","numeric","intercepted","skip","wrong_test","missing_marker","other_mode"]:
                 with self.subTest(mysql=mysql,kind=kind),tempfile.TemporaryDirectory() as tmp:
                     root=Path(tmp)

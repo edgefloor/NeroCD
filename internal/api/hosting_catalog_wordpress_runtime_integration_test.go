@@ -878,6 +878,7 @@ func TestStorageRuntimeComposeRunnerConfiguration(t *testing.T) {
 		{"old_wordpress", []string{"--hosting-storage-backup-download"}, "archive downloads require qualified storage archive configuration"},
 		{"wordpress_temporary_database_roots_rejected", []string{"--hosting-database", "--hosting-database-backups", "--database-state-root", "/tmp/nerocd-invalid-state", "--database-secret-root", "/tmp/nerocd-invalid-secrets"}, "database roots require persistent system storage"},
 		{"wordpress_mysql_backup", []string{"--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--hosting-database-backups", "--database-state-root", filepath.Join(root, "database-state"), "--database-secret-root", filepath.Join(root, "database-secrets")}, "runner --poll-interval must be greater than zero"},
+		{"wordpress_mysql_retention", []string{"--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--hosting-database-backups", "--hosting-database-remote-backups", "--hosting-database-backup-retention", "--database-state-root", filepath.Join(root, "database-state"), "--database-secret-root", filepath.Join(root, "database-secrets")}, "runner --poll-interval must be greater than zero"},
 		{"git_compose_basic", nil, "runner --poll-interval must be greater than zero"},
 		{"managed_archive_requires_config", []string{"--hosting-storage-backup-download"}, "archive downloads require qualified storage archive configuration"},
 		{"native_capabilities_require_explicit_config", []string{"--capabilities", strings.Join(append(append([]string{}, caps...), domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability), ",")}, "database capabilities require --hosting-database"},
@@ -994,8 +995,6 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if _, err := strconv.ParseInt(later, 10, 64); err != nil {
 		t.Fatal("WordPress later source record identity invalid")
 	}
-	var scheduledUpload domain.HostingDatabaseBackupTransfer
-	var scheduledObject string
 	for i, saved := range remoteBackups {
 		uploads := storageRuntimeJSON[[]domain.HostingDatabaseBackupTransfer](f, "GET", "/api/v1/database-backups/"+saved.ID+"/transfers", nil, 200)
 		var retriedUpload domain.HostingDatabaseBackupTransfer
@@ -1020,9 +1019,6 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 		if len(objectDigest) != 2 || "sha256:"+objectDigest[0] != saved.Blob.Digest {
 			t.Fatal("WordPress MySQL remote object digest changed")
 		}
-		if i == 0 {
-			scheduledUpload, scheduledObject = retriedUpload, retryPlan.ObjectKey
-		}
 	}
 	var dumpsAfter int
 	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, resource.ID).Scan(&dumpsAfter); err != nil || dumpsAfter != dumpsBefore {
@@ -1030,28 +1026,132 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	}
 	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS real due archive retains local success on upload denial; same saved schedule artifact retried without another dump")
 	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_PASS immediate upload failure retains local SQL; retry publishes exact archive without second dump")
-	cas := filepath.Join(f.root, "database-state", "logical-backups", strings.TrimPrefix(backup.Blob.Digest, "sha256:"))
-	archive, err := os.ReadFile(cas)
-	if err != nil || int64(len(archive)) != backup.Blob.Bytes || "sha256:"+fmt.Sprintf("%x", sha256.Sum256(archive)) != backup.Blob.Digest {
-		t.Fatal("scheduled remote import local archive identity unavailable")
+	retentionPath := "/api/v1/resources/" + resource.ID + "/database-backup-retention"
+	policy := storageRuntimeJSON[*domain.HostingDatabaseBackupRetentionPolicy](f, "GET", retentionPath, nil, 200)
+	if policy == nil || policy.SourceScope == nil || policy.SourceScope.BackupVersion != domain.HostingDatabaseMySQLBackupComponentVersion || policy.SourceScope.Component != "mysql" || policy.Version != domain.HostingDatabaseMySQLBackupRetentionVersion || policy.Revision != 1 || !policy.Enabled || !policy.Automatic || policy.Local.KeepCount != 1 || policy.Local.KeepDays != 0 || policy.Local.MaxBytes != 0 || policy.Remote != (domain.BackupRetentionLimits{}) {
+		t.Fatal("WordPress MySQL automatic retention policy lost exact independent source authority")
 	}
-	clear(archive)
-	if os.Remove(cas) != nil {
-		t.Fatal("scheduled remote import owned CAS removal failed")
+	publish := func(title, body string) (domain.HostingDatabaseBackupOperation, domain.HostingDatabaseBackupTransfer, string) {
+		written := wordpressRuntimePost(t, source, "create", title, body)
+		if written.ID < 1 || wordpressRuntimePost(t, source, "count", title, "").Count != 1 {
+			t.Fatal("WordPress retention source mutation unavailable")
+		}
+		admitted := storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "POST", "/api/v1/resources/"+resource.ID+"/database-backups", domain.HostingDatabaseBackupInput{RequestID: storageRemoteRuntimeRequestID(t), ExpectedResourceGeneration: resource.Generation, Component: "mysql", ExpectedDeployedOperationID: source.ID, RemoteTarget: backup.RemoteTarget}, 202)
+		settled := composeRuntimeAwaitDatabaseBackup(t, f, admitted.ID)
+		if settled.State != "succeeded" || settled.OwnershipHeld || settled.Version != domain.HostingDatabaseMySQLBackupComponentVersion || settled.SourceComponent != "mysql" || settled.SourceDeployedOperationID != source.ID || settled.Blob == nil || settled.Blob.Format != "mysql_sql" || !reflect.DeepEqual(settled.RemoteTarget, backup.RemoteTarget) {
+			t.Fatal("WordPress retention publication changed source or archive identity")
+		}
+		local, err := os.ReadFile(filepath.Join(f.root, "database-state", "logical-backups", strings.TrimPrefix(settled.Blob.Digest, "sha256:")))
+		if err != nil || int64(len(local)) != settled.Blob.Bytes || "sha256:"+fmt.Sprintf("%x", sha256.Sum256(local)) != settled.Blob.Digest {
+			t.Fatal("WordPress retention newest local publication unavailable")
+		}
+		clear(local)
+		ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+		defer cancel()
+		for {
+			transfers := storageRuntimeJSON[[]domain.HostingDatabaseBackupTransfer](f, "GET", "/api/v1/database-backups/"+settled.ID+"/transfers", nil, 200)
+			for _, upload := range transfers {
+				if upload.Mode != "upload" {
+					continue
+				}
+				if upload.State == "failed" || upload.State == "uncertain" {
+					t.Fatal("WordPress retention publication upload did not succeed")
+				}
+				if upload.State == "succeeded" {
+					var plan domain.HostingDatabaseBackupTransferPlan
+					if upload.Blob == nil || *upload.Blob != *settled.Blob || upload.TargetID != remoteTarget.ID || upload.TargetRevision != remoteTarget.Revision || upload.Version != domain.HostingDatabaseMySQLBackupTransferVersion {
+						t.Fatal("WordPress retention uploaded archive identity changed")
+					}
+					if err := f.database.QueryRow(t.Context(), `SELECT plan FROM hosting_database_backup_transfers WHERE id=$1`, upload.ID).Scan(&plan); err != nil || plan.DaemonID != failedPlans[0].DaemonID || plan.Target != failedPlans[0].Target || plan.ObjectKey != domain.BackupRemoteObjectKey(settled.ID, *settled.Blob) {
+						t.Fatal("WordPress retention publication redirected remote authority", err)
+					}
+					digest := strings.Fields(string(silo.command("mc cat fixture/nerocd-storage-runtime/" + plan.ObjectKey + " | sha256sum")))
+					if len(digest) != 2 || "sha256:"+digest[0] != settled.Blob.Digest {
+						t.Fatal("WordPress retention remote publication bytes changed")
+					}
+					assertSource()
+					return settled, upload, plan.ObjectKey
+				}
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal("WordPress retention upload did not settle")
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
 	}
-	if _, err = os.Lstat(cas); !os.IsNotExist(err) {
-		t.Fatal("scheduled remote import local CAS still present")
+	const mutationA = "WordPress MySQL retention mutation A"
+	const mutationB = "WordPress MySQL retention mutation B"
+	third, thirdUpload, thirdObject := publish(mutationA, "This record belongs to the retained remote restore snapshot")
+	fourth, fourthUpload, fourthObject := publish(mutationB, "This later record must remain absent from the restored third snapshot")
+	if third.ID == fourth.ID || third.Blob.Digest == fourth.Blob.Digest {
+		t.Fatal("WordPress retention later mutations did not produce distinct archives")
 	}
+	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, resource.ID).Scan(&dumpsAfter); err != nil || dumpsAfter != 4 {
+		t.Fatal("WordPress retention did not publish exactly two additional dumps", err)
+	}
+	var automatic domain.HostingDatabaseBackupRetentionExecution
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	for automatic.ID == "" {
+		executions := storageRuntimeJSON[[]domain.HostingDatabaseBackupRetentionExecution](f, "GET", retentionPath+"/executions", nil, 200)
+		for _, execution := range executions {
+			if execution.PolicyRevision != policy.Revision || execution.State != "succeeded" || execution.ReservationHeld || execution.LocalState != "succeeded" || execution.RemoteState != "not_selected" {
+				continue
+			}
+			for _, item := range execution.Items {
+				if item.BackupID == third.ID && item.Location == "local" && (item.State == "deleted" || item.State == "absent") {
+					automatic = execution
+				}
+			}
+		}
+		if automatic.ID != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("WordPress automatic retention did not delete the third local archive")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	linked := false
+	for _, publication := range []string{"local_" + third.ID, "remote_" + thirdUpload.ID, "local_" + fourth.ID, "remote_" + fourthUpload.ID} {
+		if automatic.ID != "dbre_auto_"+domain.HostingDocumentHash(publication)[7:39] {
+			continue
+		}
+		var state string
+		if err := f.database.QueryRow(t.Context(), `SELECT state FROM hosting_database_backup_retention_publications WHERE id=$1 AND resource_id=$2 AND policy_revision=$3`, publication, resource.ID, policy.Revision).Scan(&state); err != nil || state != "admitted" {
+			t.Fatal("WordPress automatic retention lost real publication linkage", err)
+		}
+		linked = true
+	}
+	if !linked {
+		t.Fatal("WordPress automatic retention was not reconciled from a real later publication")
+	}
+	cas := filepath.Join(f.root, "database-state", "logical-backups", strings.TrimPrefix(third.Blob.Digest, "sha256:"))
+	if _, err := os.Lstat(cas); !os.IsNotExist(err) {
+		t.Fatal("WordPress automatic retention third local CAS remains")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "database-state", "logical-backups", strings.TrimPrefix(fourth.Blob.Digest, "sha256:"))); err != nil {
+		t.Fatal("WordPress automatic retention deleted newest fourth local archive")
+	}
+	observerTransport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 3 * time.Second}
+	defer observerTransport.CloseIdleConnections()
+	observer := databaseRetentionObservationClient(silo.access, silo.secret, &http.Client{Transport: observerTransport, Timeout: 3 * time.Second})
+	if databaseRetentionObserveRemote(t.Context(), observer, thirdObject) != "present" || databaseRetentionObserveRemote(t.Context(), observer, fourthObject) != "present" {
+		t.Fatal("WordPress independent automatic local pruning changed surviving remote objects")
+	}
+	t.Log("COMPOSE_MYSQL_DATABASE_RETENTION_AUTOMATIC_PASS saved scoped automatic policy; real later publications; third local absent, remote survivor and newest fourth preserved")
 	b.set("database_import", target.Resource.ID)
 	imported := composeRuntimeAwaitDatabaseBackup(t, f, b.await(t, "database_imported"))
-	if imported.BackupID != backup.ID || imported.TargetResourceID != target.Resource.ID || imported.TargetComponent != "mysql" || imported.TargetDeployedOperationID != deployed.ID || imported.Blob == nil || *imported.Blob != *backup.Blob {
+	if imported.BackupID != third.ID || imported.TargetResourceID != target.Resource.ID || imported.TargetComponent != "mysql" || imported.TargetDeployedOperationID != deployed.ID || imported.Blob == nil || *imported.Blob != *third.Blob {
 		t.Fatal("WordPress import changed exact target or SQL archive")
 	}
 	var downloadVersion, downloadState, downloadRestore, downloadParent string
-	if err := f.database.QueryRow(t.Context(), `SELECT plan->'operation'->>'version',state,restore_operation_id,predecessor_id FROM hosting_database_backup_transfers WHERE restore_operation_id=$1 AND mode='download'`, imported.ID).Scan(&downloadVersion, &downloadState, &downloadRestore, &downloadParent); err != nil || downloadVersion != domain.HostingDatabaseMySQLBackupTransferVersion || downloadState != "succeeded" || downloadRestore != imported.ID || downloadParent != scheduledUpload.ID {
+	if err := f.database.QueryRow(t.Context(), `SELECT plan->'operation'->>'version',state,restore_operation_id,predecessor_id FROM hosting_database_backup_transfers WHERE restore_operation_id=$1 AND mode='download'`, imported.ID).Scan(&downloadVersion, &downloadState, &downloadRestore, &downloadParent); err != nil || downloadVersion != domain.HostingDatabaseMySQLBackupTransferVersion || downloadState != "succeeded" || downloadRestore != imported.ID || downloadParent != thirdUpload.ID {
 		t.Fatal("remote-only component import lost exact recorded successful upload", err)
 	}
-	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS absent local CAS; exact recorded scheduled upload downloaded and imported into separate target")
+	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS absent local CAS; exact recorded retained survivor upload downloaded and imported into separate target")
 	parts := strings.SplitN(proof, "|", 2)
 	if len(parts) != 2 {
 		t.Fatal("WordPress source post proof missing")
@@ -1060,7 +1160,7 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if !strings.Contains(restored.Title, "NeroCD persistent WordPress post") || !strings.Contains(restored.Body, "NeroCD persistent WordPress body") {
 		t.Fatal("WordPress snapshot post missing after import")
 	}
-	if wordpressRuntimePost(t, deployed, "count", "Target row before MySQL import", "").Count != 0 || wordpressRuntimePost(t, deployed, "count", "New write after compose_backup", "").Count != 0 {
+	if wordpressRuntimePost(t, deployed, "count", "Target row before MySQL import", "").Count != 0 || wordpressRuntimePost(t, deployed, "count", "New write after compose_backup", "").Count != 1 || wordpressRuntimePost(t, deployed, "count", mutationA, "").Count != 1 || wordpressRuntimePost(t, deployed, "count", mutationB, "").Count != 0 {
 		t.Fatal("WordPress import retained prior target or later source record")
 	}
 	written := wordpressRuntimePost(t, deployed, "create", "Independent target MySQL import write", "Only restored WordPress database contains this write")
@@ -1091,7 +1191,100 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if b.await(t, "database_checked") != parts[0] {
 		t.Fatal("WordPress source browser preservation proof changed")
 	}
-	terminal := wordpressRuntimeImportFailures(t, f, resource, installed, source, backup, scheduledUpload, scheduledObject, silo, assertSource)
+	manualPolicy := storageRuntimeJSON[*domain.HostingDatabaseBackupRetentionPolicy](f, "GET", retentionPath, nil, 200)
+	if manualPolicy == nil || manualPolicy.SourceScope == nil || !reflect.DeepEqual(manualPolicy.SourceScope, policy.SourceScope) || manualPolicy.Revision != policy.Revision+1 || !manualPolicy.Enabled || manualPolicy.Automatic || manualPolicy.Local != policy.Local || manualPolicy.Remote != (domain.BackupRetentionLimits{KeepCount: 1}) {
+		t.Fatal("WordPress reviewed manual retention policy changed saved source or independent limits")
+	}
+	executions := storageRuntimeJSON[[]domain.HostingDatabaseBackupRetentionExecution](f, "GET", retentionPath+"/executions", nil, 200)
+	var manual domain.HostingDatabaseBackupRetentionExecution
+	manualCount := 0
+	for _, execution := range executions {
+		if execution.PolicyRevision == manualPolicy.Revision {
+			manual = execution
+			manualCount++
+		}
+	}
+	if manualCount != 1 || manual.State != "succeeded" || manual.ReservationHeld || manual.RemoteState != "succeeded" || strings.HasPrefix(manual.ID, "dbre_auto_") {
+		t.Fatal("WordPress reviewed execution/API replay admitted multiple batches or failed remote deletion")
+	}
+	var manualRows int
+	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backup_retention_executions WHERE resource_id=$1 AND (body->>'policy_revision')::bigint=$2`, resource.ID, manualPolicy.Revision).Scan(&manualRows); err != nil || manualRows != 1 {
+		t.Fatal("WordPress retention exact replay changed persisted batch count", err)
+	}
+	var preview domain.HostingDatabaseBackupRetentionPreview
+	var plan domain.HostingDatabaseBackupRetentionPlan
+	if err := f.database.QueryRow(t.Context(), `SELECT p.body,e.plan FROM hosting_database_backup_retention_executions e JOIN hosting_database_backup_retention_previews p ON p.id=e.preview_id WHERE e.id=$1`, manual.ID).Scan(&preview, &plan); err != nil || plan.Validate() != nil || preview.ID != manual.PreviewID || preview.PolicyRevision != manualPolicy.Revision || preview.PlanHash != manual.PlanHash || !reflect.DeepEqual(preview.SourceScope, policy.SourceScope) || plan.Operation.ID != manual.ID || len(plan.Copies) != len(manual.Items) {
+		t.Fatal("WordPress retention preview/execution lost exact immutable plan", err)
+	}
+	known := map[string]domain.HostingDatabaseBackupOperation{backup.ID: backup, remoteBackup.ID: remoteBackup, third.ID: third, fourth.ID: fourth}
+	deleted := map[string]bool{}
+	for _, item := range manual.Items {
+		if item.ReservationHeld || item.State != "deleted" && item.State != "absent" {
+			t.Fatal("WordPress retention selected copy did not settle safely")
+		}
+		deleted[item.CopyID] = true
+	}
+	for _, copy := range plan.Copies {
+		if !deleted[copy.Item.CopyID] || copy.DaemonID != failedPlans[0].DaemonID || copy.DestinationID != f.destinationID || copy.ServerID != f.serverID {
+			t.Fatal("WordPress retention changed daemon, placement or exact selected copies")
+		}
+	}
+	selectedCount, remoteDeleted := 0, 0
+	newestProtected := false
+	for _, item := range preview.Items {
+		saved, ok := known[item.BackupID]
+		if !ok || saved.Blob == nil || item.Digest != saved.Blob.Digest || item.Bytes != saved.Blob.Bytes {
+			t.Fatal("WordPress retention inventory escaped owned exact archive identities")
+		}
+		if item.Selected {
+			selectedCount++
+			if len(item.ProtectedReasons) != 0 || !deleted[item.CopyID] {
+				t.Fatal("WordPress retention deleted protected or unreviewed copy")
+			}
+		} else if deleted[item.CopyID] {
+			t.Fatal("WordPress retention execution broadened reviewed selection")
+		}
+		for _, reason := range item.ProtectedReasons {
+			if item.BackupID == fourth.ID && reason == "newest" {
+				newestProtected = true
+			}
+		}
+		if item.Location == "local" {
+			path := filepath.Join(f.root, "database-state", "logical-backups", strings.TrimPrefix(item.Digest, "sha256:"))
+			if item.Selected {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatal("WordPress selected local copy survived manual retention")
+				}
+			} else if item.Availability == "available" {
+				raw, err := os.ReadFile(path)
+				sum := sha256.Sum256(raw)
+				clear(raw)
+				if err != nil || "sha256:"+fmt.Sprintf("%x", sum) != item.Digest {
+					t.Fatal("WordPress protected local copy changed")
+				}
+			}
+		} else if item.Location == "remote" && (item.Selected || item.Availability == "available") {
+			observation := databaseRetentionObserveRemote(t.Context(), observer, domain.BackupRemoteObjectKey(saved.ID, *saved.Blob))
+			if item.Selected {
+				remoteDeleted++
+				if observation != "missing" {
+					t.Fatal("WordPress selected remote copy absence unproven")
+				}
+			} else if observation != "present" {
+				t.Fatal("WordPress protected remote copy disappeared")
+			}
+		}
+	}
+	if selectedCount != len(manual.Items) || remoteDeleted == 0 || !newestProtected {
+		t.Fatal("WordPress retention exact selection or newest protection missing")
+	}
+	if databaseRetentionObserveRemote(t.Context(), observer, fourthObject) != "present" {
+		t.Fatal("WordPress newest remote archive unavailable for failure qualification")
+	}
+	assertSource()
+	t.Log("COMPOSE_MYSQL_DATABASE_RETENTION_MANUAL_PASS reviewed scoped exact batch; identical API replay admitted one execution; selected physical copies deleted and actual protections/newest fourth preserved")
+	t.Log("COMPOSE_MYSQL_DATABASE_RETENTION_SURVIVOR_PASS third local removed by real automatic publication; exact surviving remote imported; mutation A retained and later B excluded")
+	terminal := wordpressRuntimeImportFailures(t, f, resource, installed, source, fourth, fourthUpload, fourthObject, silo, assertSource)
 	t.Log("COMPOSE_MYSQL_DATABASE_IMPORT_PASS snapshot target write exact HTTP source Host; original HTTPS/uploads preserved; no filesystem or URL migration")
 	return terminal
 }

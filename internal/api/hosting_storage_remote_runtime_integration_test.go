@@ -199,7 +199,7 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 		if json.Unmarshal(raw, &cfg) != nil {
 			t.Fatal("archive configuration")
 		}
-		if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
+		if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" || os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {
 			cfg["backup_retention"] = true
 			caps = append(caps, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability, domain.HostingStorageBackupDeletionCapability)
 		}
