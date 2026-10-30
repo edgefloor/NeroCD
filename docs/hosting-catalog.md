@@ -107,7 +107,7 @@ controls do not apply to it. Use the application's component controls for
 use the same pinned MySQL component and produce database-only archives. This does
 not restore WordPress media or rewrite URLs. [Compose MySQL immediate remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification)
 accepts a validated S3 target and retries the saved SQL archive. [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification)
-use the same target and artifact checks. [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) supports a separate target from a recorded successful upload. Retention, arbitrary S3-path or staged local imports, upgrades and migration remain outside the qualified workflow.
+use the same target and artifact checks. [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) supports a separate target from a recorded successful upload. [Independent retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) and [external S3 plain/gzip import](hosting-database-backups.md#external-s3-compose-mysql-import) are qualified separately. Staged local imports, upgrades and migration remain open.
 
 ## Install and deploy
 
@@ -616,3 +616,8 @@ Per-revision target history and the existing scheduled-artifact import remained 
 [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) passed at `b36972a8`: the scheduled upload supplied a separate-target import with local CAS absent. A corrupt remote object was rejected before SQL with writers running; the separate partial-SQL case retained stopped writers and target ownership.
 
 [Compose MySQL retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) passed at `be5ecd83`: automatic local pruning preserved the remote survivor, which restored a separate target; reviewed manual remote deletion and identical API replay admitted one batch. Newest-copy protection and existing source post/full-PNG and failed-import safeguards passed.
+
+[External S3 Compose MySQL import](hosting-database-backups.md#external-s3-compose-mysql-import)
+passed at `7a1ca1b2`: independently seeded plain/gzip SQL was inspected and imported
+once into a separate target as its application account. Truncated gzip was
+rejected before SQL; source data/uploads and the existing failure safeguards passed.

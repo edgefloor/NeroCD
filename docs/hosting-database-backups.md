@@ -333,3 +333,73 @@ local SQL import, public S3 providers and
 cross-destination recovery remain outside this qualification.
 
 [Compose MySQL retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) was qualified later at `be5ecd83`; the recorded-import evidence above retains its original scope.
+
+
+## External S3 Compose MySQL import
+
+A project owner can import an operator-provided plain or gzip SQL object into a
+separate healthy, qualified Compose MySQL target. No existing NeroCD backup or
+recorded upload is required. This is database-only replacement, not media restore
+or URL migration.
+
+1. In the source application's database controls, choose external S3 as the
+   archive source and select the separate MySQL target.
+2. Select an enabled, currently validated S3 destination and enter the literal
+   object key. The key must contain 1–1024 UTF-8 bytes without control characters.
+   NeroCD does not trim, normalize or URL-decode it. The S3 principal's policy
+   still controls access to that exact key.
+3. Select **Inspect S3 object**. Review the encoded size, detected compression,
+   decoded SQL size and digest, intended target, and confirmation deadline.
+4. Acknowledge replacement and confirm while the inspected stage is ready.
+
+The runner requires `--hosting-database-external-imports`, database execution,
+runtime-environment delivery and a durable journal, plus the existing permitted
+S3 endpoint/network policy. Inspection performs one protected GET using the
+configured S3 credentials. It detects gzip by magic bytes, verifies the complete
+stream and checksum, and limits both encoded and decoded data to 10 GiB. An ETag
+or provider version is recorded when supplied; neither substitutes for the
+computed SQL digest.
+
+Inspection creates a dedicated immutable private stage, separate from shared
+backup CAS. Its receipt binds the source revision/key, observed identity, byte
+counts, digest, target deployment/daemon and expiry. The one-hour ready deadline
+applies to new confirmation. An import committed before that deadline reserves
+the bytes for queued execution and recovery. Controller-authorized cleanup
+removes only exact expired unconsumed or completed owned stages; it preserves
+consumed reservations and unknown authority. Missing or replaced bytes require
+fresh inspection, never an implicit refetch.
+
+SQL executes as the target's configured application account, never root.
+The pinned noninteractive client disables local infile, reconnect and client
+commands. Current authority and target fences are rechecked before effects.
+Inspection failures leave writers running. After SQL may have executed, an
+uncertain import retains target ownership and stopped writers for recovery.
+Exact request replay returns the original operation after current authorization,
+even after expiry or S3 unavailability. Journal replay does not repeat SQL.
+
+### External S3 import qualification
+
+At `7a1ca1b2` on 2026-10-30, qualification28 passed with all twelve markers,
+a selected-test time of 213.56 seconds and gate exit zero after 301.431 seconds.
+The actual browser imported independent plain and magic-detected gzip objects,
+with no backup/upload provenance. SQL recorded `CURRENT_USER()` and matched the
+configured nonroot application account. Identical API replay admitted no second
+import. Truncated gzip failed inspection before SQL or writer interruption.
+Existing post/full-PNG, redeploy, Stop/Start, schedule, retention, corrupt-download
+and partial-SQL safeguards passed. Responsive and served-asset checks passed
+without interception; credential scans and exact owned cleanup passed.
+
+The [safe evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/7a1ca1b28292a6ca69c9e7edee4af3f86e4f6681/evidence-index.json)
+retains qualification27's failed XML-only fixture observation and unknown original
+HTTP status, followed by the actual SDK reproduction and bounded repair. The
+original combined `make test` failure remains recorded with repaired schema/SQLC
+contracts and passing affected packages. Lock tests cover concurrent requests,
+not forced lock interleavings. Replay here is authenticated API replay, not a
+physical ambiguous-response UI retry. The focused actual-client partial-SQL test
+uses a deterministic writer seam; the full run physically covers the existing
+generated-dump partial-import hold. No physical restart/reimport was attempted.
+
+This qualification covers one Linux arm64 rootful Docker destination,
+trusted-loopback Silo and fixture-CA HTTPS. Staged local file import, public S3
+providers, cross-destination recovery, engine upgrades and full Coolify parity
+remain open. Earlier qualifications retain their own scope and limits.
