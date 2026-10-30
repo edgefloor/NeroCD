@@ -181,6 +181,12 @@ html {
   overflow-y: scroll;
 }
 
+/* The root keeps its scrollbar during modal scroll lock, so Radix's body
+   margin would reserve the same gutter twice and shift centered content. */
+html body[data-scroll-locked] {
+  margin-right: 0 !important;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -284,7 +290,7 @@ button:disabled {
     max-width: calc(100vw - 16px);
     isolation: isolate;
     border-radius: 10px;
-    box-shadow: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-top: max(4px, env(safe-area-inset-top));
@@ -372,7 +378,7 @@ input[type="password"] {
   border: 0;
   border-radius: 10px;
   background: var(--background);
-  box-shadow: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
 }
 
 .command-dialog-frame > [data-slot="command"] {
@@ -384,5 +390,6 @@ input[type="password"] {
 
 [data-slot="dialog-overlay"]:has(+ .command-dialog-frame),
 [data-slot="dialog-overlay"]:has(+ .mobile-navigation-drawer) {
-  backdrop-filter: none;
+  background: rgb(0 0 0 / 40%);
+  backdrop-filter: blur(2px);
 }

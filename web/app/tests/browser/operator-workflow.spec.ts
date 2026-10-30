@@ -818,32 +818,47 @@ test("page filtering preserves deployment context without filling browser histor
   await expect(page).toHaveURL(/\/projects$/);
 });
 
-test("navigation search supports unmatched filters and resets between openings", async ({ page }) => {
-  await page.goto("/projects");
-  await signIn(page);
-  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
-  const search = page.getByRole("button", { name: "Search navigation", exact: true });
-  await search.click();
-  await page.getByRole("combobox").fill("zz-navigation-audit");
-  await expect(page.getByRole("option", { name: 'Filter this page for "zz-navigation-audit"' })).toBeVisible();
-  await page.getByRole("combobox").press("Enter");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page).toHaveURL(/q=zz-navigation-audit/);
-  await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("zz-navigation-audit");
-  await search.click();
-  await expect(page.getByRole("combobox")).toHaveValue("");
-  await page.getByRole("combobox").fill("Settings");
-  await expect(page.getByRole("option", { name: "Settings", exact: true })).toBeVisible();
-  await page.getByRole("combobox").press("Enter");
-  await expect(page).toHaveURL(/\/settings$/);
-  await search.click();
-  await page.getByRole("combobox").fill("zz-no-page");
-  await expect(page.getByText("No matching pages or actions.")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Account", exact: true }).click();
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+test("navigation search supports unmatched filters and resets between openings", async ({ playwright, baseURL }) => {
+  const browser = await playwright.chromium.launch({ ignoreDefaultArgs: ["--hide-scrollbars"], args: ["--disable-features=OverlayScrollbar"] });
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  try {
+    await page.goto("/projects");
+    await signIn(page);
+    await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const search = page.getByRole("button", { name: "Search navigation", exact: true });
+    const backgroundBounds = () => page.locator("main").evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { left: bounds.left, width: bounds.width };
+    });
+    expect(await page.evaluate(() => innerWidth - document.documentElement.clientWidth)).toBeGreaterThan(0);
+    const beforeSearch = await backgroundBounds();
+    await search.click();
+    await expect(page.getByRole("combobox")).toBeFocused();
+    expect(await backgroundBounds()).toEqual(beforeSearch);
+    await page.getByRole("combobox").fill("zz-navigation-audit");
+    await expect(page.getByRole("option", { name: 'Filter this page for "zz-navigation-audit"' })).toBeVisible();
+    await page.getByRole("combobox").press("Enter");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page).toHaveURL(/q=zz-navigation-audit/);
+    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("zz-navigation-audit");
+    await search.click();
+    await expect(page.getByRole("combobox")).toHaveValue("");
+    await page.getByRole("combobox").fill("Settings");
+    await expect(page.getByRole("option", { name: "Settings", exact: true })).toBeVisible();
+    await page.getByRole("combobox").press("Enter");
+    await expect(page).toHaveURL(/\/settings$/);
+    await search.click();
+    await page.getByRole("combobox").fill("zz-no-page");
+    await expect(page.getByText("No matching pages or actions.")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Account", exact: true }).click();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  } finally {
+    await browser.close();
+  }
 });
 
 test("runner enrollment stays local to the reveal dialog and browser avoids runner-only APIs", async ({ page }, testInfo) => {
