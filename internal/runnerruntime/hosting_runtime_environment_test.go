@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingruntimeprotocol"
 	"nerocd/internal/runnerclient"
@@ -14,6 +15,34 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRuntimeIdentityDatabaseDownloadCapabilities(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprint("remote_", remote), func(t *testing.T) {
+			caps := []string{domain.HostingOwnedStorageCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupDownloadCapability}
+			if remote {
+				caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseBackupRemoteCapability, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseBackupRetentionCapability)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/runners/identity" || r.Header.Get("Authorization") != "Bearer fixture" {
+					t.Error("unexpected identity request")
+					w.WriteHeader(400)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_database_download", "capabilities": caps})
+			}))
+			defer server.Close()
+			config := Config{Server: server.URL, Token: "fixture", RunnerID: "runner_database_download", Database: &DatabaseExecutionConfig{BackupDownloads: true, LogicalBackups: remote, RemoteBackups: remote, BackupRetention: remote, TrustedLoopbackHTTP: true}}
+			if err := validateRuntimeIdentity(t.Context(), config); err != nil {
+				t.Fatal("configured download runtime identity rejected", err)
+			}
+			config.Database.BackupDownloads = false
+			if err := validateRuntimeIdentity(t.Context(), config); err == nil {
+				t.Fatal("download capability accepted without runtime opt-in")
+			}
+		})
+	}
+}
 
 func TestRuntimeIdentityRemoteStorageBackupCapabilities(t *testing.T) {
 	for _, tc := range []struct {

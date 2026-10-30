@@ -89,6 +89,35 @@ func TestWordPressMySQLFixtureEnrollmentProfile(t *testing.T) {
 	if json.Unmarshal(response.Body.Bytes(), &created) != nil || !reflect.DeepEqual(created.Enrollment.Capabilities, capabilities) {
 		t.Fatal("actual fixture enrollment changed supported capabilities")
 	}
+	credential := "ncr_storage_runtime_fixture_only"
+	consume := app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("e", 32), CredentialHash: fmt.Sprintf("%x", sha256.Sum256([]byte(credential)))}
+	raw, err = json.Marshal(consume)
+	if err != nil {
+		t.Fatal("consume body encoding failed")
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/runner-enrollments/consume", bytes.NewReader(raw))
+	request.Header.Set("Authorization", "Bearer "+created.Token)
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	var enrolled app.ConsumedRunnerEnrollment
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &enrolled) != nil || !reflect.DeepEqual(enrolled.Runner.Capabilities, capabilities) {
+		t.Fatal("actual fixture credential consumption changed identity")
+	}
+	tlsServer := httptest.NewTLSServer(server)
+	defer tlsServer.Close()
+	client := runnerclient.New(tlsServer.URL, credential)
+	client.HTTP = tlsServer.Client()
+	// These switches are the protected execution flags used by start(), not a
+	// reduced download-only profile. The runtime projection has its own check.
+	options := runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: true, RemoteDatabaseBackups: true, DatabaseBackupRetention: true, ExternalDatabaseImports: true, DatabaseBackupDownloads: true, Proxy: true, ProxyVerifiedSwitch: true, RegistryPull: true, RuntimeEnvironment: true, RuntimeLogs: true}
+	if id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), options); err != nil || id != enrolled.Runner.ID {
+		t.Fatal("actual enrolled WordPress CLI identity rejected", err)
+	}
+	options.DatabaseBackupDownloads = false
+	if _, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), options); err == nil {
+		t.Fatal("actual enrolled download capability accepted without CLI opt-in")
+	}
 }
 
 func TestWordPressInitialCatalogCommittedRetryContract(t *testing.T) {
