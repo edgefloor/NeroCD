@@ -1,3 +1,5 @@
+import { DatabaseBackupDownload } from "@/components/hosting/DatabaseBackupDownload";
+import type { DatabaseDownloadContext } from "@/api/hosting-database-backup-download";
 import { readBackupMetadata } from "@/components/hosting/backup-access";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -183,6 +185,7 @@ function DatabaseBackupsPanel(props: Parameters<typeof useDatabaseBackups>[0]) {
             key={v.id}
             v={v}
             recovery={recovery}
+            downloadContext={{...scope,resource:database.resource.id,binding:database.binding.id,destination:database.binding.destination_id}}
             scope={scope}
             owner={owner}
             blocked={blocked}
@@ -652,6 +655,7 @@ function ComposeDatabaseBackups(
     scope,
     targetComponent,
     destination,
+    downloadContext,
     targetEvidenceRevision,
     ack,
     setAck,
@@ -815,6 +819,7 @@ function ComposeDatabaseBackups(
           {v.mode === "restore" ? transfers.flatMap(t => t.data ?? [])
             .filter(t => t.mode === "download" && t.restore_operation_id === v.id)
             .map(t => <p key={t.id}>Remote archive download: {t.state}. Restore operation: {v.state}. Download success does not prove import completion.</p>) : null}
+          {downloadContext ? <DatabaseBackupDownload context={downloadContext} backup={v} owner={owner} blocked={locked} onDenied={retireComposeAccess} /> : null}
           {v.mode === "backup" ? (
             <BackupUploadStatus
               scope={scope}
@@ -1124,6 +1129,7 @@ function useComposeDatabaseBackups({
     scope,
     targetComponent,
     destination,
+    downloadContext: binding.data?.resource_id === resource.id && !binding.isFetching && !binding.isError ? {...scope,resource:resource.id,binding:binding.data.id,destination:binding.data.destination_id} : undefined,
     targetEvidenceRevision,
     ack,
     setAck,
@@ -1235,6 +1241,7 @@ function DatabaseBackupRequests({
 
 function DatabaseBackupRecord({
   v,
+  downloadContext,
   recovery,
   scope,
   owner,
@@ -1245,6 +1252,7 @@ function DatabaseBackupRecord({
   records,
 }: {
   v: import("@/api/hosting-database-backups").DatabaseBackup;
+  downloadContext: DatabaseDownloadContext;
   recovery:
     | import("@/api/hosting-backup-notifications").BackupRecoveryLocator
     | undefined;
@@ -1301,6 +1309,7 @@ function DatabaseBackupRecord({
         </p>
       ) : null}
       {v.failure_code ? <p>Recorded reason: {v.failure_code}</p> : null}
+      <DatabaseBackupDownload context={downloadContext} backup={v} owner={owner} blocked={blocked} onDenied={onDenied} />
       {v.mode === "backup" ? (
         <BackupUploadStatus
           scope={scope}

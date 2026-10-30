@@ -1,3 +1,5 @@
+import * as downloads from "../api/hosting-database-backup-download";
+vi.mock("../api/hosting-database-backup-download", async original => ({...await original<typeof import("../api/hosting-database-backup-download")>(), getDatabaseBackupDownloadOptions: vi.fn(async (_context, backup) => ({backup_id:backup.id,available:false,reason_code:"disabled"}))}));
 import * as externalImports from "../api/hosting-database-imports";
 vi.mock("../api/hosting-database-imports",async original=>({...await original<typeof import("../api/hosting-database-imports")>(),inspectDatabaseImport:vi.fn(),getDatabaseImportStage:vi.fn(),requestDatabaseImport:vi.fn(),getDatabaseImport:vi.fn()}));
 vi.mock("../api/hosting-database-backup-retention", async (original) => ({
@@ -63,7 +65,7 @@ const database = {
     generation: 2,
     name: "Data",
   },
-  binding: { destination_id: "runner" },
+  binding: { id:"binding",resource_id:"db",destination_id: "runner" },
   engine: "postgresql",
 } as HostingDatabase;
 const scope = { actor: "owner", project: "project", environment: "env" };
@@ -89,6 +91,7 @@ const completed: DatabaseBackup = {
   },
 };
 beforeEach(() => {
+  vi.mocked(downloads.getDatabaseBackupDownloadOptions).mockImplementation(async (_context,backup)=>({backup_id:backup.id,available:false,reason_code:"disabled"}));
   vi.mocked(retention.getRetentionPolicy).mockResolvedValue(null);
   vi.mocked(destinations.getResourceBinding).mockResolvedValue({ id: "binding", resource_id: "db", destination_id: "runner", runtime_namespace: "test", created_by: "owner", created_at: "2026-10-25T12:00:00Z" });
   vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([]);
@@ -932,4 +935,23 @@ test("local SQL import controls qualify a separate MySQL target without recorded
   expect(screen.queryByRole("combobox", {name:"Backup to restore"})).toBeNull();
   expect(screen.queryByLabelText("S3 import destination")).toBeNull();
   expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
+});
+
+
+test.each(["postgresql","mysql"] as const)("native %s backup history offers exact local artifact download",async engine=>{
+ const item={...completed,version:engine==="mysql"?"mysql.logical-local.v1" as const:"postgresql.logical-local.v1" as const,blob:{...completed.blob!,format:engine==="mysql"?"mysql_sql" as const:"postgresql_custom" as const}};
+ vi.mocked(api.listDatabaseBackups).mockResolvedValue([item]);
+ vi.mocked(downloads.getDatabaseBackupDownloadOptions).mockResolvedValue({backup_id:item.id,available:true,reason_code:"",blob:item.blob});
+ mount(true,false,{...database,engine});
+ const link=await screen.findByRole("link",{name:"Download database backup"});
+ expect(link.getAttribute("href")).toBe("/api/v1/database-backups/backup/archive");
+ expect(downloads.getDatabaseBackupDownloadOptions).toHaveBeenCalledWith({...scope,resource:"db",binding:"binding",destination:"runner"},item,expect.any(AbortSignal));
+ expect(api.requestDatabaseBackup).not.toHaveBeenCalled();expect(api.restoreDatabaseBackup).not.toHaveBeenCalled();
+});
+test.each(["postgresql","mysql"] as const)("Compose %s backup history uses current binding for local download",async engine=>{
+ vi.mocked(downloads.getDatabaseBackupDownloadOptions).mockImplementation(async (_context,backup)=>({backup_id:backup.id,available:true,reason_code:"",blob:backup.blob}));
+ mountComposeBackupPanel("compose","compose",engine);
+ const link=await screen.findByRole("link",{name:"Download database backup"});
+ expect(link.getAttribute("href")).toBe("/api/v1/database-backups/backup/archive");
+ expect(downloads.getDatabaseBackupDownloadOptions).toHaveBeenCalledWith({...scope,resource:"db",binding:"binding",destination:"runner"},expect.objectContaining({version:engine+".compose-logical-local.v1"}),expect.any(AbortSignal));
 });
