@@ -53,11 +53,11 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   }, [current.filterable, filterable, mobileMenuOpen, accountOpen, notificationsOpen]);
 
   const navigation = (label: string) => (
-    <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4" aria-label={label}>
+    <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-4" aria-label={label}>
       {navigationGroups.map((group) => {
         const grouped = items.filter((item) => item.group === group);
         if (!grouped.length) return null;
-        return <div key={group}><p className="mb-1 px-3 text-xs font-medium text-muted-foreground">{group}</p>
+        return <div key={group}><p className="mb-1.5 px-3 text-[11px] font-medium text-muted-foreground">{group}</p>
           <div className="space-y-0.5">{grouped.map((item) => <NavButton key={item.key} item={item} active={view === item.key} onClick={() => { setView(item.key); setMobileMenuOpen(false); }} />)}</div>
         </div>;
       })}
@@ -65,13 +65,13 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   );
 
   return (
-    <div className="mobile-app-shell bg-background text-foreground">
+    <div className="mobile-app-shell bg-sidebar text-foreground">
       <a href="#page-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground" onClick={(event) => {
         event.preventDefault();
         contentRef.current?.focus();
         contentRef.current?.scrollIntoView({ block: "start" });
       }}>Skip to page content</a>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col border-r border-sidebar-border bg-sidebar lg:flex">
         <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4">
           <img src="/logo.png" alt="" className="h-7 w-7 object-contain" /><strong className="text-base font-semibold tracking-tight">NeroCD</strong>
         </div>
@@ -79,8 +79,8 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
         <div className="flex shrink-0 items-center justify-between border-t border-sidebar-border px-6 py-3 text-xs text-sidebar-muted"><span>System</span><span>{snapshot?.health.status ?? "unknown"}</span></div>
       </aside>
 
-      <section className="min-w-0 lg:pl-60">
-        <header className="mobile-shell-header sticky top-0 z-20 flex h-14 min-w-0 items-center justify-between gap-2 border-b border-border bg-background/95 px-4 backdrop-blur-sm lg:px-6">
+      <section className="shell-workspace min-w-0 lg:ml-[264px]">
+        <header className="mobile-shell-header sticky top-0 z-20 flex h-14 min-w-0 items-center justify-between gap-2 border-b border-border bg-background/95 px-4 lg:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <DialogTrigger asChild><Button variant="ghost" size="sm" className="lg:hidden" aria-label="Open mobile navigation">Menu</Button></DialogTrigger>
@@ -92,7 +92,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
                 {navigation("Mobile navigation")}
               </DialogContent>
             </Dialog>
-            <h1 className="truncate text-base font-semibold tracking-tight">{current.label}</h1>
+            <h1 className="truncate text-sm font-medium">{current.label}</h1>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <Button variant="ghost" size="icon" aria-label="Search navigation" onClick={onOpenSearch}><Search className="h-4 w-4" /></Button>
@@ -114,10 +114,10 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
             </Dialog>
           </div>
         </header>
-        <main id="page-content" ref={contentRef} tabIndex={-1} aria-label={current.label} className="mobile-shell-content mx-auto max-w-[1400px] scroll-mt-14 px-4 py-6 outline-none lg:px-6">
-          {current.filterable && filterable && <div className="mb-5 flex min-w-0 items-end gap-2 sm:items-center">
+        <main id="page-content" ref={contentRef} tabIndex={-1} aria-label={current.label} className="mobile-shell-content mx-auto max-w-[1400px] scroll-mt-14 px-4 py-5 outline-none lg:px-6">
+          {current.filterable && filterable && <div className="mb-4 flex min-w-0 items-end gap-2 sm:items-center">
             <label className="flex min-w-0 flex-1 flex-col items-start gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-3" htmlFor="page-filter"><span className="shrink-0">Filter this page</span>
-              <input id="page-filter" ref={filterRef} type="search" className="h-9 min-w-0 w-full max-w-sm rounded-lg border border-border bg-card px-3 text-foreground" placeholder={`Filter ${current.label.toLowerCase()}`} value={query} onChange={(event) => setQuery(event.target.value)} />
+              <input id="page-filter" ref={filterRef} type="search" className="h-9 min-w-0 w-full max-w-sm rounded-md border border-border bg-card px-3 text-foreground" placeholder={`Filter ${current.label.toLowerCase()}`} value={query} onChange={(event) => setQuery(event.target.value)} />
             </label>
             {query && <Button variant="ghost" size="sm" className="shrink-0" onClick={() => { setQuery(""); filterRef.current?.focus(); }}>Clear filter</Button>}
           </div>}
