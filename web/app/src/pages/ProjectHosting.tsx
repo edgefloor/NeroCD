@@ -677,11 +677,7 @@ export function ProjectHosting({
       <CardHeader>
         <CardTitle>Project hosting</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Save application or database configuration in shared project
-          environments. Database metadata does not start an engine. Choose
-          application placement and request image deployment separately.
-          Operation history records outcomes; it does not provide continuous
-          runtime health.
+          Choose a project, save an application or database, then review its deployment.
         </p>
       </CardHeader>
       <CardContent className="min-w-0 space-y-5">
@@ -1120,7 +1116,7 @@ function ApplicationGenerationConflict(
             Keep my draft with generation {latest.generation}
           </Button>
           <p className="text-xs text-muted-foreground">
-            This enables Save configuration. It does not save automatically.
+            Review your changes, then choose Save configuration.
           </p>
         </>
       ) : null}

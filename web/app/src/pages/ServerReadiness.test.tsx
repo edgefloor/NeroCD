@@ -18,7 +18,7 @@ function setup(roles = ["runner_admin"], blocked = false) {
 }
 async function loaded() { await screen.findByText(/Last successful refresh, local receipt/); }
 test("administrator sees actionable prerequisites and independently labeled receipt and server status", async () => {
-  const fetch = backend(); setup(); await loaded(); expect(screen.getByText("Server-reported status: unknown")).toBeTruthy(); expect(screen.getByText(/Requires Linux, matching native amd64 or arm64/)).toBeTruthy(); expect(fetch.mock.calls.every(([, options]) => options.method === "GET")).toBe(true);
+  const fetch = backend(); setup(); await loaded(); expect(screen.getByText("Server-reported status: unknown")).toBeTruthy(); expect(screen.getByText(/Linux and matching native amd64 or arm64/)).toBeTruthy(); expect(fetch.mock.calls.every(([, options]) => options.method === "GET")).toBe(true);
   for (const reason of Object.values(readinessReasons)) expect(reason.length).toBeGreaterThan(40);
 });
 test.each([[], ["viewer"]].map((roles) => ({ roles })))("non-administrators never read readiness %j", ({ roles }) => { const fetch = backend(); setup(roles); expect(fetch).not.toHaveBeenCalled(); });

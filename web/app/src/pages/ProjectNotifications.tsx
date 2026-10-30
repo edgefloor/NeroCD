@@ -760,9 +760,7 @@ export function ProjectNotifications({
       <CardHeader>
         <CardTitle>Project backup notifications</CardTitle>
         <p className="text-sm">
-          Configure project email and webhook delivery for backup failures and
-          failed remote uploads. Inspect recorded delivery outcomes separately
-          from database backup history.
+          Send email or webhook alerts for failed backups and uploads.
         </p>
       </CardHeader>
       <CardContent className="min-w-0 space-y-4">

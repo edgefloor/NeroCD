@@ -37,7 +37,7 @@ test("lost Stop receipt retries the identical reviewed request", async () => {
 });
 test.each(["held", "unavailable", "stopped"])("recorded %s blocks Stop", async (state) => {
   setup(() => json({ ...running, state, ...(state === "stopped" ? { stop_operation_id: "prior_stop" } : {}) }));
-  await screen.findByText(new RegExp("Recorded lifecycle: " + state)); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Review Stop Compose" }).disabled).toBe(true);
+  await screen.findByText(new RegExp("Last recorded action: " + state)); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Review Stop Compose" }).disabled).toBe(true);
 });
 test.each([401, 403])("Stop HTTP%s clears its review and reports permission loss", async (status) => {
   const { denied } = setup((_url, options) => options.method === "POST" ? json({}, status) : undefined);
@@ -52,7 +52,7 @@ test("retired Stop response cannot select an operation in a new resource scope",
   view.rerender(<QueryClientProvider client={client}><StackLifecycle key="other" {...props} scope={{ ...scope, resource: "other" }} /></QueryClientProvider>);
   expect(signal?.aborted).toBe(true); await act(async () => resolve(json(receipt))); expect(selected).not.toHaveBeenCalled(); expect(screen.queryByRole("region", { name: "Reviewed Compose stop" })).toBeNull();
 });
-test("viewers receive recorded lifecycle without Stop controls", async () => { setup(undefined, false); await screen.findByText(/Recorded lifecycle: running/); expect(screen.queryByRole("button", { name: "Review Stop Compose" })).toBeNull(); });
+test("viewers receive recorded lifecycle without Stop controls", async () => { setup(undefined, false); await screen.findByText(/Last recorded action: running/); expect(screen.queryByRole("button", { name: "Review Stop Compose" })).toBeNull(); });
 
 test("stale saved generation cannot create a Stop review or request", async () => {
   const { fetch } = setup(() => json({ ...running, resource_generation: 3 }));

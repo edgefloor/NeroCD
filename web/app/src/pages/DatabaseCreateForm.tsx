@@ -1,3 +1,4 @@
+import { HelpDetails } from "@/components/common/HelpDetails";
 import { destinationsQuery } from "@/api/destinations";
 import {
   boundedDatabaseRequest,
@@ -283,7 +284,9 @@ function useDatabaseCreation({
             engine: "postgresql" as const,
             recipe_version: databaseRecipes.postgresql,
           }
-        : engine === "mysql" ? {engine: "mysql" as const, recipe_version: databaseRecipes.mysql} : { engine: "redis" as const, recipe_version: databaseRecipes.redis };
+        : engine === "mysql"
+          ? { engine: "mysql" as const, recipe_version: databaseRecipes.mysql }
+          : { engine: "redis" as const, recipe_version: databaseRecipes.redis };
     const body: HostingDatabaseCreateInput = attempt ?? {
       request_id: databaseRequestID(),
       project_id: scope.project,
@@ -399,7 +402,9 @@ function DatabaseConfigurationForm({
   attempt: ReturnType<typeof useDatabaseCreation>["attempt"];
   setName: React.Dispatch<React.SetStateAction<string>>;
   engine: "postgresql" | "mysql" | "redis";
-  setEngine: React.Dispatch<React.SetStateAction<"postgresql" | "mysql" | "redis">>;
+  setEngine: React.Dispatch<
+    React.SetStateAction<"postgresql" | "mysql" | "redis">
+  >;
   destination: string;
   setDestination: React.Dispatch<React.SetStateAction<string>>;
   selectable: boolean;
@@ -421,8 +426,8 @@ function DatabaseConfigurationForm({
     >
       <h4 className="font-medium">Add database configuration</h4>
       <p className="text-sm">
-        Save PostgreSQL or Redis metadata with an owned storage reference and
-        encrypted credential references. Saving does not start an engine.
+        Save the database settings and credentials. Deployment is a separate
+        step.
       </p>
       <label className="block space-y-1">
         Database name
@@ -450,8 +455,20 @@ function DatabaseConfigurationForm({
           <option value="redis">Redis</option>
         </select>
       </label>
-      {engine === "mysql" ? <p className="text-sm">The destination runner requires hosting_mysql_v1 for deployment and hosting_mysql_backup_v1 for logical backup and restore. The server verifies current placement and capabilities.</p> : null}
-      <p className="break-all text-sm">Recipe: {databaseRecipes[engine]}</p>
+      {engine === "mysql" ? (
+        <p className="text-sm">
+          Choose a runner that supports MySQL deployment and backups.
+        </p>
+      ) : null}
+      <HelpDetails title="Database requirements">
+        <p className="break-all">Recipe: {databaseRecipes[engine]}</p>
+        {engine === "mysql" && (
+          <p>
+            Runner capabilities: hosting_mysql_v1 for deployment;
+            hosting_mysql_backup_v1 for backup and restore.
+          </p>
+        )}
+      </HelpDetails>
       <DatabaseDestinationChoices
         destination={destination}
         refreshing={refreshing}

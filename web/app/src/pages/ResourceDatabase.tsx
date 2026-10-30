@@ -1,3 +1,4 @@
+import { HelpDetails } from "@/components/common/HelpDetails";
 import { allProjectMembersQuery, principalQuery } from "@/api";
 import type { Resource } from "@/api/hosting";
 import {
@@ -37,11 +38,11 @@ export function useDatabaseAccess(project: string, environment: string) {
     !members.isPending;
   const viewer = Boolean(
     principal &&
-      (principal.roles.includes("system_admin") ||
-        members.data?.some(
-          (member) =>
-            member.project_id === project && member.user_id === principal.id,
-        )),
+    (principal.roles.includes("system_admin") ||
+      members.data?.some(
+        (member) =>
+          member.project_id === project && member.user_id === principal.id,
+      )),
   );
   const owner = canOwnProject(principal, members.data ?? [], project);
   const maintainer = canMaintainProject(principal, members.data ?? [], project);
@@ -85,47 +86,44 @@ export function DatabaseMetadata({
       aria-label={label ?? `Database metadata for ${database.resource.name}`}
     >
       <h4 className="break-all font-medium">{database.resource.name}</h4>
-      <p role="status">
-        Saved database configuration does not start an engine or confirm a
-        running database. The legacy metadata state "adapter_unqualified" is not
-        a current runner qualification result. Deployment admission checks the
-        runner.
+      <p role="status">Configuration saved.</p>
+      <p className="text-sm">
+        Engine: <span>{database.engine}</span>
       </p>
-      <dl className="space-y-1 break-all text-sm">
-        <dt>Engine</dt>
-        <dd>{database.engine}</dd>
-        <dt>Recipe</dt>
-        <dd>{database.recipe_version}</dd>
-        <dt>Resource ID</dt>
-        <dd>{database.resource.id}</dd>
-        <dt>Configuration generation</dt>
-        <dd>{database.resource.generation}</dd>
-        <dt>Destination</dt>
-        <dd>{database.binding.destination_id}</dd>
-        <dt>Runtime namespace</dt>
-        <dd>{database.binding.runtime_namespace}</dd>
-        <dt>Storage reference</dt>
-        <dd>{database.storage_ref.storage_id}</dd>
-        <dt>Storage generation</dt>
-        <dd>{database.storage_ref.generation}</dd>
-        <dt>Storage reference hash</dt>
-        <dd>{database.storage_ref.hash}</dd>
-      </dl>
-      <ul
-        className="space-y-2 break-all text-sm"
-        aria-label="Database credential references"
-      >
-        {database.credentials.map((credential) => (
-          <li key={credential.role}>
-            {credential.role} · username {credential.username} · secret ID{" "}
-            {credential.secret_id} · version {credential.version}
-          </li>
-        ))}
-      </ul>
-      <p className="text-xs text-muted-foreground">
-        Credential references contain no password or connection string. Engine
-        execution requires separate deployment admission.
-      </p>
+      <HelpDetails title="Saved configuration details">
+        <dl className="space-y-1 break-all text-sm">
+          <dt>Recipe</dt>
+          <dd>{database.recipe_version}</dd>
+          <dt>Resource ID</dt>
+          <dd>{database.resource.id}</dd>
+          <dt>Configuration generation</dt>
+          <dd>{database.resource.generation}</dd>
+          <dt>Destination</dt>
+          <dd>{database.binding.destination_id}</dd>
+          <dt>Runtime namespace</dt>
+          <dd>{database.binding.runtime_namespace}</dd>
+          <dt>Storage reference</dt>
+          <dd>{database.storage_ref.storage_id}</dd>
+          <dt>Storage generation</dt>
+          <dd>{database.storage_ref.generation}</dd>
+          <dt>Storage reference hash</dt>
+          <dd>{database.storage_ref.hash}</dd>
+        </dl>
+        <ul
+          className="space-y-2 break-all text-sm"
+          aria-label="Database credential references"
+        >
+          {database.credentials.map((credential) => (
+            <li key={credential.role}>
+              {credential.role} · username {credential.username} · secret ID{" "}
+              {credential.secret_id} · version {credential.version}
+            </li>
+          ))}
+        </ul>
+        <p className="text-xs text-muted-foreground">
+          These are credential references, not passwords or connection strings.
+        </p>
+      </HelpDetails>
     </section>
   );
 }

@@ -110,7 +110,7 @@ test("stateless accepted receipt remains selected when the shared history refres
   const fetch = backend(); setup(); acknowledge();
   vi.spyOn(client, "invalidateQueries").mockRejectedValue(new Error("history refresh failed"));
   await request();
-  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop_one/);
   await screen.findByText(/was accepted, but history could not be refreshed/);
   expect(screen.getByLabelText<HTMLInputElement>("Container port").disabled).toBe(false);
   expect(screen.queryByText(/connection ended without a confirmed response/)).toBeNull();
@@ -141,7 +141,7 @@ test.each(refreshDenials)("accepted $mode refresh preserves later denial $status
     fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
     fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
   } else { acknowledge(); await request(); }
-  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop_one/);
   await waitFor(() => expect(reads).toEqual({ history: 1, retained: 1 }));
   await waitFor(() => expect(client.getQueryCache().getAll().some((query) => query.state.error instanceof ApiError && query.state.error.status === 503)).toBe(true));
   await act(async () => { completeDenial(json({ error: "later current denial" }, status)); });
@@ -181,10 +181,10 @@ test.each(["deadline", "actor", "resource"])("mixed refresh ignores late denial 
   // Actor query notifications can retire the keyed panel after the receipt text
   // is already absent. Wait for request retirement itself before the late reply.
   await waitFor(() => expect(pendingSignal?.aborted).toBe(true));
-  if (retirement !== "deadline") expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull();
+  if (retirement !== "deadline") expect(screen.queryByText(/Deployment requested. Check progress below. Request: hop_one/)).toBeNull();
   await act(async () => { completeDenial(json({ error: "retired denial" }, 403)); });
   expect(screen.queryByText(/Deployment permission is unavailable. Reload to verify current project access/)).toBeNull();
-  if (retirement === "deadline") expect(screen.getByText(/Deployment request accepted: hop_one/)).toBeTruthy();
+  if (retirement === "deadline") expect(screen.getByText(/Deployment requested. Check progress below. Request: hop_one/)).toBeTruthy();
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
   if (retirement === "deadline") expect(reads).toEqual({ history: 1, retained: 1 });
 });
@@ -239,7 +239,7 @@ test.each(["storage", "stateless"].flatMap((mode) => ["history", "retained"].map
     fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
   } else { acknowledge(); await request(); }
   await screen.findByText(/was accepted, but history could not be refreshed/);
-  expect(screen.getByText(/Deployment request accepted: hop_one/)).toBeTruthy();
+  expect(screen.getByText(/Deployment requested. Check progress below. Request: hop_one/)).toBeTruthy();
   expect(screen.queryByText(/Deployment permission is unavailable. Reload to verify current project access/)).toBeNull();
   expect(screen.queryByText(/Delivery is unconfirmed/)).toBeNull();
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
@@ -262,16 +262,16 @@ test.each(["actor", "resource"])("accepted storage refresh times out and fences 
   fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
   vi.useFakeTimers();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" })); });
-  expect(screen.getByText(/Deployment request accepted: hop_one/)).toBeTruthy();
+  expect(screen.getByText(/Deployment requested. Check progress below. Request: hop_one/)).toBeTruthy();
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(screen.getByText(/was accepted, but history could not be refreshed/)).toBeTruthy();
   expect(historySignal?.aborted).toBe(true);
   vi.useRealTimers();
   if (change === "resource") view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={{ ...resource, id: "other" }} writable blocked={false} /></QueryClientProvider>);
   else await act(async () => { client.setQueryData(queryKeys.principal, { id: "other", provider: "oidc", roles: [] }); });
-  await waitFor(() => expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/Deployment requested. Check progress below. Request: hop_one/)).toBeNull());
   await act(async () => { resolve(json(page([{ ...operation, mutation_hold: true }]))); });
-  expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull();
+  expect(screen.queryByText(/Deployment requested. Check progress below. Request: hop_one/)).toBeNull();
   expect(screen.queryByText(/was accepted, but history could not be refreshed/)).toBeNull();
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
 });
@@ -553,7 +553,7 @@ test("fixed-port mode requires explicit interruption acknowledgment and resets i
   expect(screen.queryByRole("note")).toBeNull();
   acknowledge();
   fireEvent.change(screen.getByLabelText("Host port allocation"), { target: { value: "fixed" } });
-  expect(screen.getByRole("note").textContent).toMatch(/stops the current container before replacement readiness is verified, interrupting service/);
+  expect(screen.getByRole("note").textContent).toMatch(/current release stops before the replacement is ready/);
   expect(screen.getByLabelText(/I understand that reusing.*interrupts service/)).toBeTruthy();
   for (const [label, value] of [["Runner-local host port", "9090"], ["Container port", "8080"], ["Readiness path", "/health"], ["Readiness timeout in seconds", "45"]]) {
     expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
@@ -660,7 +660,7 @@ test.each([false, true])("saved Compose captures runtime references and exact %s
   expect(screen.getByText(/TOKEN \(managed secret reference\)/)).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Retained releases" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
-  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop_one/);
   const writes = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
   expect(writes).toHaveLength(1);
   const input = JSON.parse(writes[0]![1].body as string);
@@ -750,7 +750,7 @@ test("uncertain Compose delivery retains its exact request while the server hold
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Review current Compose deployment" }).disabled).toBe(true);
   const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical Compose deployment request" });
   expect(retry.disabled).toBe(false); fireEvent.click(retry);
-  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop_one/);
   const writes = fetch.mock.calls.filter(([, init]) => init.method === "POST");
   expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
 });
@@ -783,7 +783,7 @@ test("Start reviews saved configuration and freezes the exact stopped reference"
   fireEvent.click(screen.getByLabelText(/I reviewed this saved Compose configuration/));
   fireEvent.click(screen.getByRole("button", { name: "Start reviewed Compose" }));
   fireEvent.click(await screen.findByRole("button", { name: "Retry identical Compose deployment request" }));
-  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop_one/);
   const writes = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
   expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
   expect(JSON.parse(String(writes[0]![1].body))).toMatchObject({ expected_generation: 1, expected_runtime_configuration_generation: 3, managed_stack: { acknowledge_interruption: true, expected_stopped_operation_id: "stop_one" }, readiness: { path: "/ready", timeout_seconds: 20 } });
@@ -848,7 +848,7 @@ test.each(["initial", "replacement", "start"])("private Compose %s freezes the s
   fireEvent.click(screen.getByLabelText(/I reviewed this saved Compose configuration/));
   fireEvent.click(screen.getByRole("button", { name: mode === "start" ? "Start reviewed Compose" : "Deploy reviewed Compose" }));
   fireEvent.click(await screen.findByRole("button", { name: "Retry identical Compose deployment request" }));
-  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop_one/);
   const submissions = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
   expect(submissions).toHaveLength(2);
   expect(submissions[0]![1].body).toBe(submissions[1]![1].body);
@@ -881,7 +881,7 @@ test.each([undefined, { secret_id: "credential", version: 2 }, { secret_id: "oth
   await chooseComposeRegistry(); await reviewCompose();
   fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
   await screen.findByText(/Delivery is unconfirmed/);
-  expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull();
+  expect(screen.queryByText(/Deployment requested. Check progress below. Request: hop_one/)).toBeNull();
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
 });
 
@@ -896,7 +896,7 @@ test("catalog Compose prefills readiness while preserving operator review and sa
   expect(fetch.mock.calls.some(([, init]) => init.method === "POST")).toBe(false);
   await reviewCompose();
   fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
-  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop_one/);
   const write = fetch.mock.calls.find(([url, init]) => url.endsWith("/deployments") && init.method === "POST")!;
   expect(JSON.parse(write[1].body as string)).toMatchObject({ readiness: { path: "/health", timeout_seconds: 120 }, expected_runtime_configuration_generation: 3 });
 });
@@ -931,7 +931,7 @@ test("late catalog metadata preserves captured Compose readiness and identical r
   expect(screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds").value).toBe("30");
   fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
   fireEvent.click(await screen.findByRole("button", { name: "Retry identical Compose deployment request" }));
-  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop_one/);
   const writes = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
   expect(writes).toHaveLength(2);
   expect(writes[0]![1].body).toBe(writes[1]![1].body);

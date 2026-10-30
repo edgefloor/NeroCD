@@ -101,7 +101,8 @@ test("viewer reads database metadata and history without mutation or secret acce
   ])
     expect(screen.getByText(text, { exact: true })).toBeTruthy();
   expect(screen.getByText(/secret ID admin_secret/)).toBeTruthy();
-  expect(screen.getByText(/does not start an engine/)).toBeTruthy();
+  expect(screen.getByText(/Configuration saved/)).toBeTruthy();
+  expect(screen.queryByText("adapter_unqualified")).toBeNull();
   expect(screen.queryByRole("form")).toBeNull();
   expect(
     screen.queryByRole("button", { name: /^(reveal|copy|deploy|connect)/i }),

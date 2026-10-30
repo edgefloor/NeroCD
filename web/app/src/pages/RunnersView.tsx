@@ -1,4 +1,5 @@
 import type { CreatedRunnerEnrollment, Runner, RunnerDetail } from "@/api";
+import { HelpDetails } from "@/components/common/HelpDetails";
 import { EmptyState } from "@/components/common/EmptyState";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -42,18 +43,19 @@ function splitValues(value: string): string[] {
 }
 function runnerState(runner: Runner): string {
   if (runner.status === "revoked")
-    return "Credential revoked; the next authenticated runner operation is denied.";
+    return "Revoked. This runner can no longer authenticate.";
   const age = Date.now() - new Date(runner.last_heartbeat_at).getTime();
   if (!Number.isFinite(age))
-    return "Heartbeat unavailable; runner connectivity cannot be determined.";
+    return "Heartbeat unavailable. Connectivity is unknown.";
   if (age > 2 * 60_000)
-    return "Heartbeat is stale; wait for recovery or inspect runner connectivity.";
-  return "Active and recently observed.";
+    return "Heartbeat overdue. Check the runner connection.";
+  return "Recent heartbeat.";
 }
 
 export function RunnersView(props: {
   runners: Runner[];
   q?: string;
+  showEnrollment?: boolean;
   canAdmin: boolean;
   controlsDisabled?: boolean;
   onEnroll: (input: {
@@ -72,10 +74,12 @@ function RunnerInventory({
   q,
   canAdmin,
   controlsDisabled = false,
+  showEnrollment = true,
   onEnroll,
 }: {
   runners: Runner[];
   q?: string;
+  showEnrollment?: boolean;
   canAdmin: boolean;
   controlsDisabled?: boolean;
   onEnroll: (input: {
@@ -204,14 +208,30 @@ function RunnerInventory({
     URL.revokeObjectURL(url);
   }
   return (
-    <section className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <section
+      className={`grid min-w-0 grid-cols-1 gap-4 ${canAdmin && showEnrollment ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}
+    >
       <Card className="min-w-0">
         <CardHeader>
           <CardTitle>Runner inventory</CardTitle>
         </CardHeader>
         <CardContent className="grid min-w-0 grid-cols-1 gap-3">
           {!visible.length ? (
-            <EmptyState title="No runners match this view" icon={KeyRound} />
+            <EmptyState
+              title={
+                runners.length
+                  ? "No runners match this filter"
+                  : "No runners on this page"
+              }
+              description={
+                runners.length
+                  ? "Change or clear the page filter."
+                  : canAdmin
+                    ? "Choose a setup method to connect a host."
+                    : "Ask a runner administrator to connect a host."
+              }
+              icon={KeyRound}
+            />
           ) : (
             visible.map((runner) => (
               <Link
@@ -243,12 +263,14 @@ function RunnerInventory({
         </CardContent>
       </Card>
       {canAdmin ? (
-        <EnrollmentForm
-          busy={busy}
-          disabled={controlsDisabled}
-          error={error}
-          onSubmit={enroll}
-        />
+        <div hidden={!showEnrollment}>
+          <EnrollmentForm
+            busy={busy}
+            disabled={controlsDisabled}
+            error={error}
+            onSubmit={enroll}
+          />
+        </div>
       ) : (
         <Card>
           <CardContent className="p-6" role="status">
@@ -294,6 +316,7 @@ function EnrollmentForm({
   const [capabilities, setCapabilities] = useState("compose-deploy");
   const [ttl, setTTL] = useState("600");
   const locked = busy || disabled;
+  const [profile, setProfile] = useState("compose");
   function submit(event: FormEvent) {
     event.preventDefault();
     if (locked) return;
@@ -317,7 +340,7 @@ function EnrollmentForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Create one-time enrollment</CardTitle>
+        <CardTitle>Manual runner setup</CardTitle>
       </CardHeader>
       <CardContent>
         <form
@@ -378,66 +401,70 @@ function EnrollmentForm({
             ) : null}
           </div>
           <label className="grid gap-1 text-sm">
-            Capabilities
-            <Input
+            Runner profile
+            <Select
+              aria-label="Runner profile"
+              value={profile}
               disabled={locked}
-              aria-label="Runner capabilities"
-              value={capabilities}
-              onChange={(event) => setCapabilities(event.target.value)}
-              required
-            />
+              onChange={(event) => {
+                setProfile(event.target.value);
+                if (event.target.value !== "custom")
+                  setCapabilities(
+                    (
+                      {
+                        compose: ["compose-deploy"],
+                        image: imageHostingCapabilities,
+                        configured: configuredImageHostingCapabilities,
+                        readiness: readinessImageHostingCapabilities,
+                        custom: [],
+                      }[event.target.value] ?? []
+                    ).join(","),
+                  );
+              }}
+            >
+              <option value="compose">Compose tasks</option>
+              <option value="image">Image hosting</option>
+              <option value="configured">
+                Image hosting with variables and logs
+              </option>
+              <option value="readiness">
+                Image hosting with readiness checks
+              </option>
+              <option value="custom">Custom capabilities</option>
+            </Select>
           </label>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-auto whitespace-normal"
-            disabled={locked}
-            onClick={() => setCapabilities(imageHostingCapabilities.join(","))}
-          >
-            Use image hosting capability preset
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-auto whitespace-normal"
-            disabled={locked}
-            onClick={() =>
-              setCapabilities(configuredImageHostingCapabilities.join(","))
-            }
-          >
-            Use image hosting with runtime configuration, observations and logs
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-auto whitespace-normal"
-            disabled={locked}
-            onClick={() =>
-              setCapabilities(readinessImageHostingCapabilities.join(","))
-            }
-          >
-            Use image hosting with server readiness
-          </Button>
           <p className="text-xs text-muted-foreground">
-            Server readiness adds hosting_readiness_v1 and requires HTTPS,
-            enabled execution, Linux with matching native amd64 or arm64 Docker
-            architecture, Docker API 1.54, and at least 1 GiB free in each
-            dedicated work and journal root. It reports prerequisites and cannot
-            authorize deployment or release restore holds.
+            {profile === "readiness"
+              ? "Requires HTTPS, Linux, matching native Docker architecture, Docker API 1.54, and 1 GiB free in each work and journal root. Readiness checks report prerequisites, not deployment success."
+              : profile === "configured"
+                ? "Requires HTTPS and a dedicated Linux runner. Includes runtime variables, observations and requested logs."
+                : profile === "image"
+                  ? "Deploy container images with a dedicated Compose runner."
+                  : profile === "compose"
+                    ? "Run Compose tasks on this host. Choose an image-hosting profile for application deployment."
+                    : "Enter the capabilities your runner is configured to accept."}
           </p>
-          <p className="text-xs text-muted-foreground">
-            The runtime configuration, observations and logs profile requires
-            HTTPS and adds hosting_runtime_env_v1, hosting_observation_v1 and
-            hosting_runtime_logs_v1. Runtime logs are collected only while an
-            authorized viewer requests them. It does not configure builds or a
-            managed proxy.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Image hosting requires compose-deploy, image_deploy, and
-            image_release_ports_v1 with no shell capability. The preset replaces
-            this new enrollment's capability draft; it does not change existing
-            runner grants.
-          </p>
+          {profile === "custom" && (
+            <label className="grid gap-1 text-sm">
+              Capabilities
+              <Input
+                disabled={locked}
+                aria-label="Runner capabilities"
+                value={capabilities}
+                onChange={(event) => setCapabilities(event.target.value)}
+                required
+              />
+            </label>
+          )}
+          <HelpDetails title="Capability details">
+            <p className="break-all">
+              Selected capabilities: {capabilities || "None"}.
+            </p>
+            <p>
+              Profiles replace this enrollment draft only. Existing grants are
+              unchanged. Image-hosting profiles cannot include shell execution.
+            </p>
+          </HelpDetails>
           <label className="grid gap-1 text-sm">
             Enrollment lifetime
             <Select
@@ -461,8 +488,8 @@ function EnrollmentForm({
             {busy ? "Creating…" : "Create enrollment"}
           </Button>
           <p className="text-xs text-muted-foreground">
-            The secret is shown once, never placed in links, search, storage,
-            notifications, or logs.
+            Save the one-time secret in the next step. It cannot be retrieved
+            later.
           </p>
         </form>
       </CardContent>
@@ -503,6 +530,7 @@ function EnrollmentSecret({
             and cannot be retrieved again.
           </DialogDescription>
         </DialogHeader>
+        <h3 className="font-medium">1. Save the enrollment secret</h3>
         <code
           className="break-all rounded border p-3 text-xs"
           aria-label="Enrollment secret"
@@ -513,6 +541,33 @@ function EnrollmentSecret({
           Runner ID: {enrollment?.enrollment.runner_id}. Expires{" "}
           {enrollment ? formatDate(enrollment.enrollment.expires_at) : ""}.
         </p>
+        {copyStatus === "failed" ? (
+          <p role="alert" className="text-sm text-destructive">
+            Unable to copy. Download the secret instead, or try again.
+          </p>
+        ) : copyStatus === "copied" ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            Copied to clipboard.
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            disabled={copyStatus === "copying"}
+            onClick={onCopy}
+          >
+            <Copy className="mr-1 h-4 w-4" />
+            {copyStatus === "copying" ? "Copying..." : "Copy"}
+          </Button>
+          <Button onClick={onDownload}>
+            <Download className="mr-1 h-4 w-4" />
+            Download once
+          </Button>
+        </div>
+        <h3 className="font-medium">2. Prepare the host</h3>
+        <p className="text-sm">
+          Install NeroCD, Docker Engine and Docker Compose on the host.
+        </p>
         <label htmlFor={`${id}-origin`}>Runner-reachable server URL</label>
         <Input
           id={`${id}-origin`}
@@ -520,15 +575,16 @@ function EnrollmentSecret({
           onChange={(event) => setServerURL(event.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          Use the actual origin reachable from the intended host. Production
-          requires HTTPS; the HTTP example explicitly enables development mode
-          for local testing.
+          Enter the URL this host can reach. Use HTTPS in production; HTTP
+          commands enable development mode.
         </p>
-        <p className="min-w-0 break-words text-xs">
-          Persisted capabilities:{" "}
-          {(enrollment?.enrollment.capabilities ?? []).join(", ") || "none"}.
-          These grants determine the command.
-        </p>
+        <HelpDetails title="Enrolled capabilities">
+          <p className="break-all">
+            {(enrollment?.enrollment.capabilities ?? []).join(", ") || "None"}.
+            These saved grants determine the command.
+          </p>
+        </HelpDetails>
+        <h3 className="font-medium">3. Run the enrollment command</h3>
         {command ? (
           <pre
             aria-label="Manual runner command"
@@ -574,39 +630,11 @@ function EnrollmentSecret({
           </div>
         )}
         <p className="text-xs text-muted-foreground">
-          Install NeroCD, Docker Engine, and Docker Compose on the intended host
-          first. Save the downloaded token at the enrollment-file path, owned by
-          the runner user with mode 0600. Create the dedicated work and journal
-          directories, owned by that user with mode 0700. When available, the
-          command consumes this one-time enrollment and writes a permanent
-          credential to the credential-file path. Keep that file private and
-          persist those directories. After the agent enrolls, close this dialog
-          and refresh eligible runners below. This page does not perform SSH
-          setup or verify Docker.
+          Save the token at the command's enrollment-file path with mode 0600.
+          Keep the permanent credential private and persist the dedicated work
+          and journal directories with mode 0700. After enrollment, register the
+          runner as a hosting server.
         </p>
-        {copyStatus === "failed" ? (
-          <p role="alert" className="text-sm text-destructive">
-            Unable to copy. Download the secret instead, or try again.
-          </p>
-        ) : copyStatus === "copied" ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            Copied to clipboard.
-          </p>
-        ) : null}
-        <DialogFooter>
-          <Button
-            variant="outline"
-            disabled={copyStatus === "copying"}
-            onClick={onCopy}
-          >
-            <Copy className="mr-1 h-4 w-4" />
-            {copyStatus === "copying" ? "Copying..." : "Copy"}
-          </Button>
-          <Button onClick={onDownload}>
-            <Download className="mr-1 h-4 w-4" />
-            Download once
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

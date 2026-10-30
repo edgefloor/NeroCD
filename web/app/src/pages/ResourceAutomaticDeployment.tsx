@@ -148,7 +148,7 @@ export function AutomaticDeploymentSummary({
           "An unrecognized outcome was recorded. Refresh and inspect the deployment and switch operations before another decision."}
       </p>
       <p className="text-xs">
-        This is recorded operation status, not a current uptime or health check.
+        This is the last operation result. Check runtime status for current health.
         Deployment completion and HTTPS switch completion are separate outcomes.
       </p>
       <p className="text-xs">

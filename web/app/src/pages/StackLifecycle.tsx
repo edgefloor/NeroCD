@@ -39,14 +39,12 @@ export function StackLifecycle(input: {
     >
       <h6 className="font-medium">Compose lifecycle</h6>
       <p>
-        Recorded lifecycle:{" "}
-        {lifecycle.isError || !current ? "unavailable" : current.state}. This is
-        settled operation evidence, not live health monitoring.
+        Last recorded action:{" "}
+        {lifecycle.isError || !current ? "unavailable" : current.state}. Check runtime status for current health.
       </p>
       {current?.state === "held" ? (
         <p role="status">
-          Lifecycle is held. Wait for settlement or recovery proof before
-          another action.
+          Another action is blocked until settlement or recovery completes.
         </p>
       ) : null}
       {current?.state === "stopped" ? (

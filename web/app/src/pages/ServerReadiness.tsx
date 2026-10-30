@@ -1,3 +1,4 @@
+import { HelpDetails } from "@/components/common/HelpDetails";
 import { ApiError, principalQuery } from "@/api";
 import {
   currentRead,
@@ -83,15 +84,16 @@ function ReadinessReader(input: { serverID: string }) {
     >
       <h4 className="font-medium">Server readiness</h4>
       <p className="text-sm">
-        Read-only host prerequisites for basic_image_hosting.v1. This diagnostic
-        cannot authorize deployment, reserve capacity, or release restore holds.
+        Check whether this host meets image-hosting prerequisites.
       </p>
-      <p className="text-xs">
-        Requires Linux, matching native amd64 or arm64 agent and Docker
-        architecture, execution enabled, matched configuration, Docker API 1.54,
-        a safe Docker CLI, and accessible work and journal roots with at least 1
-        GiB free each.
-      </p>
+      <HelpDetails title="What readiness checks">
+        <p>
+          Linux and matching native amd64 or arm64 architecture, enabled
+          execution, Docker API 1.54, and accessible work and journal roots with
+          1 GiB free each. Deployment and restore recovery still require their
+          own checks.
+        </p>
+      </HelpDetails>
       <Button
         type="button"
         variant="outline"
@@ -294,10 +296,10 @@ function useReadinessReader({ serverID }: { serverID: string }) {
   const status = snapshot?.status;
   const current = Boolean(
     snapshot &&
-      !error &&
-      documentVisible &&
-      inViewport &&
-      currentRead(snapshot),
+    !error &&
+    documentVisible &&
+    inViewport &&
+    currentRead(snapshot),
   );
   const report = status?.report;
 

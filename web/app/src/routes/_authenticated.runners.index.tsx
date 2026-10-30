@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createRunnerEnrollment, principalQuery, runnersQuery } from "@/api";
 import { RunnersView } from "@/pages/RunnersView";
@@ -20,6 +21,7 @@ export const Route = createFileRoute("/_authenticated/runners/")({
 
 function RunnersRoute() {
   const { q } = Route.useSearch();
+  const [setup, setSetup] = useState<"manual" | "ssh" | "existing">("manual");
   const page = usePage();
   const runners = useQuery({
     ...runnersQuery({ limit: page.limit, offset: page.offset }),
@@ -40,7 +42,17 @@ function RunnersRoute() {
   const canAdmin = (principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin");
   return <>
     {error}
+    {canAdmin && <section aria-label="Server setup" className="mb-4 space-y-3">
+      <h2 className="text-lg font-semibold">Connect a server</h2>
+      <p className="text-sm text-muted-foreground">Choose how to connect your host.</p>
+      <div className="flex flex-wrap gap-2">
+        <Button variant={setup === "manual" ? "default" : "outline"} aria-pressed={setup === "manual"} onClick={() => setSetup("manual")}>Enroll manually</Button>
+        <Button variant={setup === "ssh" ? "default" : "outline"} aria-pressed={setup === "ssh"} onClick={() => setSetup("ssh")}>Set up over SSH</Button>
+        <Button variant={setup === "existing" ? "default" : "outline"} aria-pressed={setup === "existing"} onClick={() => setSetup("existing")}>Register existing runner</Button>
+      </div>
+    </section>}
     <RunnersView
+      showEnrollment={setup === "manual"}
       controlsDisabled={failedQueries.length > 0}
       runners={runners.data?.items ?? []}
       q={q}
@@ -48,6 +60,6 @@ function RunnersRoute() {
       onEnroll={createRunnerEnrollment}
     />
     <PageNavigation page={runners.data} label="runners" loading={runners.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
-    <HostingServers canAdmin={canAdmin} blocked={failedQueries.length > 0} />
+    <HostingServers setupMode={setup} canAdmin={canAdmin} blocked={failedQueries.length > 0} />
   </>;
 }

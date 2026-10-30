@@ -86,3 +86,19 @@ test("bounded server and runner choices request separate page offsets", async ()
   await waitFor(() => expect(fetch.mock.calls.map(([url]) => url)).toContain("/api/v1/servers?limit=20&offset=20"));
   expect(fetch.mock.calls.map(([url]) => url)).toContain("/api/v1/runners?limit=20&offset=20");
 });
+
+
+test("changing setup task preserves the existing-runner registration draft", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => standard(url)));
+  const view = setup();
+  await screen.findByRole("option", { name: /Compose runner/ });
+  fireEvent.change(screen.getByLabelText("Hosting server name"), { target: { value: "Unsent host" } });
+  fireEvent.change(screen.getByLabelText("Enrolled Compose runner"), { target: { value: runner.id } });
+  const ui = (setupMode: "manual" | "ssh" | "existing") => <QueryClientProvider client={client}><HostingServers canAdmin blocked={false} setupMode={setupMode} /></QueryClientProvider>;
+  view.rerender(ui("ssh"));
+  expect(screen.queryByRole("form", { name: "Register hosting server" })).toBeNull();
+  view.rerender(ui("manual"));
+  view.rerender(ui("existing"));
+  expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Hosting server name" }).value).toBe("Unsent host");
+  expect(screen.getByLabelText<HTMLSelectElement>("Enrolled Compose runner").value).toBe(runner.id);
+});

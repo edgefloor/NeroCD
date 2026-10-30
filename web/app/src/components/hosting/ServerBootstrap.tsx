@@ -101,8 +101,7 @@ function ProjectPicker({
     >
       <h3 className="font-semibold">Add server over SSH</h3>
       <p className="text-sm">
-        Use an existing managed SSH key to install and start a dedicated hosting
-        runner. Choose a project you own. No Task is required.
+        Install a runner on your host using a managed SSH key. Choose a project you own to begin.
       </p>
       {authorityPending ? (
         <p role="status">
@@ -224,11 +223,7 @@ function ProjectBootstrap(props: {
   return (
     <div className="min-w-0 space-y-5">
       <p className="text-sm">
-        Qualified host profile: prepared Debian 12, native arm64, systemd,
-        Docker API 1.54 and Docker Compose. Prepare these prerequisites before
-        probing. The hosting_image_v1 preset supports image deployment and
-        readiness. Builds, proxy management and runtime logs require separate
-        qualification.
+        Prepare a Debian 12 arm64 host with systemd, Docker API 1.54 and Docker Compose before probing. This setup installs an image-hosting runner with readiness checks.
       </p>
       {options.data && !options.data.available ? (
         <p role="status">{unavailable[options.data.unavailable_reason]}</p>
@@ -1256,8 +1251,7 @@ function BootstrapSSHSecret(viewModel: BootstrapSSHSecretModel) {
         ))}
       </select>
       <p className="text-xs">
-        Choose an existing secret containing the SSH private key. This flow uses
-        it without revealing its value. Manage keys in Settings.
+        Choose a managed private key from Settings. Its value stays hidden.
       </p>
       {secrets.data &&
       !secrets.data.items.some((item) => item.status === "active") ? (

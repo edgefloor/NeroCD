@@ -1,3 +1,4 @@
+import { HelpDetails } from "@/components/common/HelpDetails";
 import { DatabaseBackupDownload } from "@/components/hosting/DatabaseBackupDownload";
 import type { DatabaseDownloadContext } from "@/api/hosting-database-backup-download";
 import { readBackupMetadata } from "@/components/hosting/backup-access";
@@ -688,11 +689,12 @@ function ComposeDatabaseBackups(
     >
       <h5 className="font-medium">Compose database logical backups</h5>
       <p>
-        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. MySQL imports can use a local archive, a recorded successful upload an inspected configured S3 object, or a staged local SQL file. Retention for the qualified mysql component is configured below. Archives contain
-        database records, not uploaded files or volume contents. The runner
-        verifies the live profile before execution. Source writes may continue
-        during backup.
+        Back up database records or import an archive into a separate component. Uploaded files and volume contents are not included. Source writes may continue during backup.
       </p>
+      <HelpDetails title="Supported database archives">
+        <p>Supports official PostgreSQL 16 and pinned MySQL 8.4.13 components. The runner checks the live database profile before execution.</p>
+        <p>Backups can upload to a validated destination. MySQL can import a local backup, a recorded successful upload, an inspected S3 object, or a browser-uploaded SQL file. MySQL retention is configured below.</p>
+      </HelpDetails>
       <label className="block">
         Database backup component
         <select

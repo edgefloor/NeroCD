@@ -180,7 +180,7 @@ function setup(handler?: Handler, roles = principal.roles) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <ServerBootstrap blocked={false} />
+      <div data-testid="bootstrap-task"><ServerBootstrap blocked={false} /></div>
     </QueryClientProvider>,
   );
   return { fetch, ...view };
@@ -359,6 +359,9 @@ test("response loss preserves identical install body, UUID, reviewed version and
     screen.getByRole("button", { name: "Install and start runner" }),
   );
   await screen.findByText(/response was not confirmed/);
+  screen.getByTestId("bootstrap-task").hidden = true;
+  expect(screen.queryByRole("button", { name: "Retry exact onboarding request" })).toBeNull();
+  screen.getByTestId("bootstrap-task").hidden = false;
   await act(async () => {
     await client.invalidateQueries({ queryKey: ["serverBootstrap"] });
   });
@@ -622,7 +625,7 @@ test("disabled onboarding, revoked keys and missing qualified release show prere
       .getByRole<HTMLButtonElement>("button", { name: "Prepare onboarding" })
       .closest("fieldset")!.disabled,
   ).toBe(true);
-  expect(screen.getByText(/prepared Debian 12/)).toBeTruthy();
+  expect(screen.getByText(/Debian 12 arm64 host/)).toBeTruthy();
 });
 test("late response from a previous project cannot populate the new project", async () => {
   let resolve: (response: Response) => void = () => {};

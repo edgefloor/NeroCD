@@ -522,7 +522,7 @@ test("Compose selection creates no demand and import carries exact distinct sett
  fireEvent.click(screen.getByRole("button",{name:"Restore database backup"}));
  await waitFor(()=>expect(api.restoreDatabaseBackup).toHaveBeenCalled());
  expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[0]?.[3]).toEqual({request_id:expect.any(String),component_target:{resource_id:"target",component:"postgresql",expected_deployed_operation_id:"hop_target",expected_resource_generation:3,acknowledge_replacement:true}});
- expect(screen.getByText(/not uploaded files/)).toBeTruthy();
+ expect(screen.getByText(/Uploaded files and volume contents are not included/)).toBeTruthy();
 });
 
 

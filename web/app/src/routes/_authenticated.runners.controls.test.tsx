@@ -234,7 +234,7 @@ test("pending enrollment locks the submitted draft and restores it after failure
     fireEvent.submit(form);
   });
   expect(form.getAttribute("aria-busy")).toBe("true");
-  for (const field of [...screen.getAllByRole("textbox"), screen.getByRole("combobox")]) {
+  for (const field of [...screen.getAllByRole("textbox"), ...screen.getAllByRole("combobox")]) {
     expect((field as HTMLInputElement).disabled).toBe(true);
   }
   fireEvent.submit(form);
@@ -292,8 +292,8 @@ test("failed later runner pages offer a return to the first page", () => {
 
 test.each(["", "not-a-date"])("runner details do not report invalid heartbeat %j as recent", (heartbeat) => {
   render(<RunnerDetailView runner={{ ...runner, last_heartbeat_at: heartbeat } as never} canAdmin onRevoke={vi.fn()} />);
-  expect(screen.getByText("Heartbeat unavailable; runner connectivity cannot be determined.")).toBeTruthy();
-  expect(screen.queryByText("Active and recently observed.")).toBeNull();
+  expect(screen.getByText("Heartbeat unavailable. Connectivity is unknown.")).toBeTruthy();
+  expect(screen.queryByText("Recent heartbeat.")).toBeNull();
   expect(screen.getByRole("button", { name: "Revoke credential" })).toBeTruthy();
 });
 
@@ -357,7 +357,42 @@ test("changing cached runner details clears the previous revocation confirmation
 test("server readiness preset replaces draft grants without shell", async () => {
   queryData(["runner_admin"]);
   const Component = RunnersRoute.options.component!; render(<Component />);
-  fireEvent.click(screen.getByRole("button", { name: "Use image hosting with server readiness" }));
+  fireEvent.change(screen.getByLabelText("Runner profile"), { target: { value: "readiness" } });
+  fireEvent.change(screen.getByLabelText("Runner profile"), { target: { value: "custom" } });
   expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).toContain("hosting_readiness_v1");
   expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).not.toContain("shell");
+});
+
+
+test("setup choice hides manual controls without losing the enrollment draft", () => {
+  queryData(["runner_admin"]);
+  const Component = RunnersRoute.options.component!;
+  render(<Component />);
+  fireEvent.change(screen.getByLabelText("Runner ID"), { target: { value: "runner_draft" } });
+  fireEvent.change(screen.getByLabelText("Runner profile"), { target: { value: "readiness" } });
+  fireEvent.change(screen.getByLabelText("Runner profile"), { target: { value: "custom" } });
+  fireEvent.click(screen.getByRole("button", { name: "Set up over SSH" }));
+  expect(screen.queryByRole("textbox", { name: "Runner ID" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Set up over SSH" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: "Register existing runner" }));
+  expect(screen.queryByRole("form", { name: "Create runner enrollment" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Enroll manually" }));
+  expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Runner ID" }).value).toBe("runner_draft");
+  expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).toContain("hosting_readiness_v1");
+});
+
+test("a pending manual enrollment remains one request and exposes its secret after switching setup tasks", async () => {
+  let resolve!: (value: Awaited<ReturnType<typeof createRunnerEnrollment>>) => void;
+  vi.mocked(createRunnerEnrollment).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  queryData(["runner_admin"]);
+  const Component = RunnersRoute.options.component!;
+  render(<Component />);
+  fireEvent.change(screen.getByLabelText("Runner ID"), { target: { value: "runner_pending" } });
+  fireEvent.change(screen.getByLabelText("Runner name"), { target: { value: "Pending" } });
+  fireEvent.submit(screen.getByRole("form", { name: "Create runner enrollment" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set up over SSH" }));
+  await act(async () => resolve({ enrollment: { expires_at: new Date(Date.now() + 600_000).toISOString(), runner_id: "runner_pending" }, token: "pending-token" } as never));
+  expect(screen.getByRole("dialog", { name: "One-time runner enrollment secret" })).toBeTruthy();
+  expect(screen.getByLabelText("Enrollment secret").textContent).toBe("pending-token");
+  expect(createRunnerEnrollment).toHaveBeenCalledOnce();
 });

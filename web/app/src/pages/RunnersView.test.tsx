@@ -39,10 +39,11 @@ test.each(["permission", "unmount"])("late enrollment replies cannot expose a se
 });
 test("image hosting preset is explicit and includes versioned release ports without modifying custom grants silently", async () => {
   const onEnroll = vi.fn().mockResolvedValue(created()); render(<RunnersView runners={[]} canAdmin onEnroll={onEnroll} />);
+  fireEvent.change(screen.getByLabelText("Runner profile"), { target: { value: "custom" } });
   expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).toBe("compose-deploy");
   fireEvent.change(screen.getByLabelText("Runner capabilities"), { target: { value: "shell,custom" } });
   expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).toBe("shell,custom");
-  fireEvent.click(screen.getByRole("button", { name: "Use image hosting capability preset" })); submit();
+  fireEvent.change(screen.getByLabelText("Runner profile"), { target: { value: "image" } }); submit();
   await screen.findByRole("dialog");
   expect(onEnroll).toHaveBeenCalledWith(expect.objectContaining({ capabilities: ["compose-deploy", "image_deploy", "image_release_ports_v1"] }));
 });
@@ -58,12 +59,12 @@ test("runtime profile submits its grants but returned metadata alone determines 
   fireEvent.change(within(dialog).getByLabelText("Runner-reachable server URL"), { target: { value: "https://control.example.test" } });
   expect(onEnroll).toHaveBeenCalledWith(expect.objectContaining({ capabilities: ["compose-deploy"] }));
   expect(within(dialog).getByLabelText("Manual runner command").textContent).toContain("--hosting-runtime-env --hosting-observation --execute");
-  expect(dialog.textContent).toContain("Persisted capabilities: compose-deploy, image_deploy");
+  expect(within(dialog).getByText(/compose-deploy, image_deploy, image_release_ports_v1, hosting_runtime_env_v1, hosting_observation_v1/)).toBeTruthy();
 });
 test("runtime profile replaces the draft explicitly without adding flags to a basic returned enrollment", async () => {
   const onEnroll = vi.fn().mockResolvedValue(created());
   render(<RunnersView runners={[]} canAdmin onEnroll={onEnroll} />);
-  fireEvent.click(screen.getByRole("button", { name: "Use image hosting with runtime configuration, observations and logs" })); submit();
+  fireEvent.change(screen.getByLabelText("Runner profile"), { target: { value: "configured" } }); submit();
   const dialog = await screen.findByRole("dialog");
   expect(onEnroll).toHaveBeenCalledWith(expect.objectContaining({ capabilities: ["compose-deploy", "image_deploy", "image_release_ports_v1", "hosting_runtime_env_v1", "hosting_observation_v1", "hosting_runtime_logs_v1"] }));
   expect(within(dialog).getByLabelText("Manual runner command").textContent).not.toContain("--hosting-observation");

@@ -203,19 +203,29 @@ function ServerDetail({
 export function HostingServers({
   canAdmin,
   blocked,
+  setupMode = "existing",
 }: {
   canAdmin: boolean;
   blocked: boolean;
+  setupMode?: "manual" | "ssh" | "existing";
 }) {
   if (!canAdmin) return null;
   return (
     <>
-      <ServerBootstrap blocked={blocked} />
-      <ServerAdministration blocked={blocked} />
+      <div hidden={setupMode !== "ssh"}>
+        <ServerBootstrap blocked={blocked} />
+      </div>
+      <ServerAdministration
+        blocked={blocked}
+        showRegistration={setupMode === "existing"}
+      />
     </>
   );
 }
-function ServerAdministration(props: { blocked: boolean }) {
+function ServerAdministration(props: {
+  blocked: boolean;
+  showRegistration: boolean;
+}) {
   const viewModel = useServerAdministration(props);
   const {
     blocked,
@@ -233,9 +243,7 @@ function ServerAdministration(props: { blocked: boolean }) {
       <CardHeader>
         <CardTitle>Hosting servers</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Register a consumed Compose runner, then grant projects access to its
-          default destination. Saved records do not test Docker, configure SSH
-          or HTTPS, or deploy an application.
+          Choose a server to manage project access, readiness and routing.
         </p>
       </CardHeader>
       <CardContent className="grid min-w-0 items-start gap-5 lg:grid-cols-2">
@@ -288,7 +296,9 @@ function ServerAdministration(props: { blocked: boolean }) {
             onPrevious={() => setOffset(Math.max(0, offset - 20))}
             onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))}
           />
-          <HostingServerRegistration {...viewModel} />
+          <div hidden={!props.showRegistration}>
+            <HostingServerRegistration {...viewModel} />
+          </div>
         </section>
         {selected ? (
           <ServerDetail
@@ -446,9 +456,8 @@ function HostingServerRegistration(viewModel: HostingServerRegistrationModel) {
         ))}
       </select>
       <p className="text-xs text-muted-foreground">
-        Only active Compose-capable runners without shell capability are offered
-        from this page. The API also verifies consumed enrollment and dedicated
-        credentials.
+        Choose an active, dedicated Compose runner that has completed
+        enrollment.
       </p>
       <Button
         type="button"

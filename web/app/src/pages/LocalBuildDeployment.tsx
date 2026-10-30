@@ -1,3 +1,4 @@
+import { HelpDetails } from "@/components/common/HelpDetails";
 import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
 import { getResource, type Resource } from "@/api/hosting";
 import {
@@ -68,10 +69,10 @@ function matchesBuildGenerations(
           build.snapshot.source.credential_kind;
   return Boolean(
     source &&
-      kindMatches &&
-      resource.generation === build.snapshot.resource_generation &&
-      source.source_id === build.snapshot.source.source_id &&
-      source.generation === build.snapshot.source.generation,
+    kindMatches &&
+    resource.generation === build.snapshot.resource_generation &&
+    source.source_id === build.snapshot.source.source_id &&
+    source.generation === build.snapshot.source.generation,
   );
 }
 
@@ -160,27 +161,32 @@ function LocalDeployment(props: LocalDeploymentProps) {
           : "Deploy recorded local build"}
       </h6>
       <p className="text-sm">
-        A new deployment captures the current saved runtime generation and
-        requires a compatible runner. Saving variables does not update the
-        serving release.
+        Saved variable changes take effect on the next deployment.
       </p>
-      <p className="break-all text-sm">
-        Build {build.id} · source generation {source?.generation} · resource
-        generation {base.generation} ·{" "}
-        {compose
-          ? `prepared Compose ${compose.hash}`
-          : `image ID ${build.artifact?.image_id}`}
-        .
-      </p>
-      <p className="text-xs text-muted-foreground">
-        Requires the same saved destination, runner and Docker daemon as this
-        build, a current project grant and enrolled runner with
-        local_build_deploy_v1, and an operator-enabled agent started with
-        --local-build-deploy.{" "}
-        {compose
-          ? "Built services and their image aliases use recorded local image IDs. Other service images are pulled using the selected image access. Deploying this stack interrupts its writers and retains owned named volumes."
-          : "The agent uses the recorded local image ID without fetching or transferring it."}
-      </p>
+      <HelpDetails title="Build and runner details">
+        <p className="break-all text-sm">
+          Build {build.id} · source generation {source?.generation} · resource
+          generation {base.generation} ·{" "}
+          {compose
+            ? `prepared Compose ${compose.hash}`
+            : `image ID ${build.artifact?.image_id}`}
+          .
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Requires the same saved destination, runner and Docker daemon as this
+          build, a current project grant and enrolled runner with
+          local_build_deploy_v1, and an operator-enabled agent started with
+          --local-build-deploy.{" "}
+          {compose
+            ? "Built services and their image aliases use recorded local image IDs. Other service images are pulled using the selected image access."
+            : "The agent uses the recorded local image ID without fetching or transferring it."}
+        </p>
+      </HelpDetails>
+      {compose && (
+        <p className="text-sm">
+          Deploying this stack interrupts its writers. Named volumes are kept.
+        </p>
+      )}
       <LocalDeploymentPrerequisites {...viewModel} />{" "}
       <LocalComposeContinuity {...viewModel} />
       {committedCompose && lifecycle?.state === "stopped" ? (
@@ -246,10 +252,15 @@ function useDeploymentConfirmation(reviewIdentity: string, attempted: boolean) {
   const [confirmation, setConfirmation] = useState<string>();
   // Changed evidence retires consent even if an earlier selection returns.
   // An attempted request keeps the acknowledgement for its frozen inputs.
-  if (!attempted && confirmation !== undefined && confirmation !== reviewIdentity)
+  if (
+    !attempted &&
+    confirmation !== undefined &&
+    confirmation !== reviewIdentity
+  )
     setConfirmation(undefined);
   const confirmed =
-    confirmation !== undefined && (attempted || confirmation === reviewIdentity);
+    confirmation !== undefined &&
+    (attempted || confirmation === reviewIdentity);
   const setConfirmed = (value: boolean) =>
     setConfirmation(value ? reviewIdentity : undefined);
   return [confirmed, setConfirmed] as const;
@@ -321,9 +332,9 @@ function useLocalDeployment({
   });
   const committedCompose = Boolean(
     compose &&
-      currentStack.isSuccess &&
-      !currentStack.isFetching &&
-      currentStack.data.operation,
+    currentStack.isSuccess &&
+    !currentStack.isFetching &&
+    currentStack.data.operation,
   );
   const deploymentOptions = useQuery({
     ...storageDeploymentOptionsQuery(stackScope),
@@ -800,11 +811,11 @@ function LocalDeploymentForm(viewModel: LocalDeploymentFormModel) {
       <LocalDeploymentPorts {...viewModel} />
       <p className="text-xs text-muted-foreground">
         {compose
-          ? "Readiness uses ordinary HTTP at a relative path such as /health. Automatic allocation reuses the current stack's port on replacement. Every Compose replacement interrupts all components while preserving named volumes. A failed replacement may require recovery before another deployment."
-          : "Readiness uses ordinary HTTP at a relative path such as /health. Automatic allocation retains earlier containers until explicit cleanup. A fixed port can interrupt the current release before readiness succeeds."}{" "}
+          ? "Replacement interrupts all components. Named volumes are kept. A failed replacement may require recovery before another deployment."
+          : "Automatic allocation keeps earlier containers until explicit cleanup. A fixed port can interrupt the current release before readiness succeeds."}{" "}
         {compose
-          ? "Existing selected HTTPS routes follow the reviewed continuity plan. Configure HTTPS separately after the first deployment."
-          : "Deployment does not automatically switch traffic or configure HTTPS."}
+          ? "Existing HTTPS routes follow the reviewed plan. Configure a route after the first deployment."
+          : "Configure a route to make the release public."}
       </p>
       <LocalComposeRegistry {...viewModel} />
       <LocalDeploymentAcknowledgment {...viewModel} />

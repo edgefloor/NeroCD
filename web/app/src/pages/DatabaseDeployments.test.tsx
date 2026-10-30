@@ -192,7 +192,7 @@ test.each(["postgresql", "mysql", "redis"] as const)(
   async (engine) => {
     const { fetch } = setup({ engine });
     await deploy();
-    await screen.findByRole("region", { name: "Recorded database operation" });
+    await screen.findByRole("region", { name: "Database deployment result" });
     const writes = fetch.mock.calls.filter(
       ([, init]) => init.method === "POST",
     );
@@ -248,7 +248,7 @@ test("an ambiguous response keeps the exact original intent and prevents concurr
     .map(([, init]) => init.body);
   expect(bodies[1]).toBe(bodies[0]);
   await act(async () => resolve(json(operation, 202)));
-  await screen.findByRole("region", { name: "Recorded database operation" });
+  await screen.findByRole("region", { name: "Database deployment result" });
 });
 test("held history after a lost response permits only the retained byte-identical retry", async () => {
   let writes = 0;
@@ -282,7 +282,7 @@ test("held history after a lost response permits only the retained byte-identica
   expect(writes).toBe(1);
   fireEvent.click(retry);
   fireEvent.click(retry);
-  await screen.findByRole("region", { name: "Recorded database operation" });
+  await screen.findByRole("region", { name: "Database deployment result" });
   const requests = fetch.mock.calls.filter(
     ([, init]) => init.method === "POST",
   );
@@ -399,7 +399,7 @@ test.each([401, 403])(
       ]);
     });
     expect(
-      screen.queryByRole("region", { name: "Recorded database operation" }),
+      screen.queryByRole("region", { name: "Database deployment result" }),
     ).toBeNull();
     expect(
       fetch.mock.calls.filter(([, init]) => init.method === "POST"),
@@ -428,7 +428,7 @@ test("maintainer to viewer changes the access epoch, aborts pending writes, and 
   expect(signal?.aborted).toBe(true);
   await act(async () => resolve(json(operation, 202)));
   expect(
-    screen.queryByRole("region", { name: "Recorded database operation" }),
+    screen.queryByRole("region", { name: "Database deployment result" }),
   ).toBeNull();
   expect(screen.queryByRole("button", { name: /^Deploy/ })).toBeNull();
   expect(
@@ -499,7 +499,7 @@ test("older generation history opens dedicated recorded evidence without current
     }),
   );
   const evidence = await screen.findByRole("region", {
-    name: "Recorded database operation",
+    name: "Database deployment result",
   });
   expect(evidence.textContent).toContain("Recorded configuration generation1");
   expect(evidence.textContent).toContain("No completion evidence");
@@ -516,7 +516,7 @@ test("a settled recorded operation permits a new deliberate deployment with a ne
         : undefined,
   });
   await deploy();
-  await screen.findByRole("region", { name: "Recorded database operation" });
+  await screen.findByRole("region", { name: "Database deployment result" });
   const button = screen.getByRole("button", { name: "Deploy again" });
   await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
   fireEvent.click(button);
@@ -611,7 +611,7 @@ test("a transient authority refresh preserves an uncertain deployment for an ide
   });
   await waitFor(() => expect(retry.hasAttribute("disabled")).toBe(false));
   fireEvent.click(retry);
-  await screen.findByRole("region", { name: "Recorded database operation" });
+  await screen.findByRole("region", { name: "Database deployment result" });
   expect(
     fetch.mock.calls.filter(([, init]) => init.method === "POST")[1]![1].body,
   ).toBe(body);
@@ -640,7 +640,7 @@ test("an actor change aborts an in-flight deployment and fences its late receipt
   expect(signal?.aborted).toBe(true);
   await act(async () => resolve(json(operation, 202)));
   expect(
-    screen.queryByRole("region", { name: "Recorded database operation" }),
+    screen.queryByRole("region", { name: "Database deployment result" }),
   ).toBeNull();
   await waitFor(() =>
     expect(
@@ -669,7 +669,7 @@ test("a stale settled detail cannot erase a newer recorded hold", async () => {
       name: /operation · generation 2 · queued/,
     }),
   );
-  await screen.findByRole("region", { name: "Recorded database operation" });
+  await screen.findByRole("region", { name: "Database deployment result" });
   expect(
     screen
       .getByRole("button", { name: "Deploy again" })
@@ -724,7 +724,7 @@ test("metadata and resource-list refreshes cannot replace an uncertain original 
   });
   await waitFor(() => expect(retry.hasAttribute("disabled")).toBe(false));
   fireEvent.click(retry);
-  await screen.findByRole("region", { name: "Recorded database operation" });
+  await screen.findByRole("region", { name: "Database deployment result" });
   expect(
     fetch.mock.calls.filter(([, init]) => init.method === "POST")[1]![1].body,
   ).toBe(body);
@@ -782,7 +782,7 @@ test.each(Object.entries(historyFixture.cases))(
       name: new RegExp(saved.operation.id + " · generation"),
     });
     fireEvent.click(history);
-    await screen.findByRole("region", { name: "Recorded database operation" });
+    await screen.findByRole("region", { name: "Database deployment result" });
     expect(screen.queryByRole("alert")).toBeNull();
     const deploy = screen.getByRole("button", { name: "Deploy again" });
     await waitFor(() => expect(deploy.hasAttribute("disabled")).toBe(false));

@@ -69,7 +69,7 @@ test("runner_admin principals can operate runner list and detail controls at des
   const runner = await registerRunner(page);
 
   await page.goto("/runners", { waitUntil: "networkidle" });
-  await expect(page.getByText("Create one-time enrollment", { exact: true })).toBeVisible();
+  await expect(page.getByText("Manual runner setup", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: new RegExp(runner.name) })).toBeVisible();
 
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -87,6 +87,15 @@ test("runner_admin principals can operate runner list and detail controls at des
     const enrollmentID = `runner_mobile_${width}_${Date.now()}${Math.floor(Math.random() * 10_000)}`;
     await page.getByLabel("Runner ID").fill(enrollmentID);
     await page.getByLabel("Runner name").fill(`Mobile runner ${width}`);
+    await page.getByRole("button", { name: "Set up over SSH", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Add server over SSH", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Runner ID", { exact: true })).toBeHidden();
+    await page.getByRole("button", { name: "Register existing runner", exact: true }).click();
+    await expect(page.getByRole("form", { name: "Register hosting server", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Enroll manually", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByLabel("Runner ID", { exact: true })).toHaveValue(enrollmentID);
+    await expect(page.getByLabel("Runner name", { exact: true })).toHaveValue(`Mobile runner ${width}`);
     await page.getByRole("button", { name: "Create enrollment" }).press("Enter");
     await expect(page.getByRole("dialog", { name: "One-time runner enrollment secret" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

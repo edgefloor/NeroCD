@@ -243,13 +243,13 @@ function DatabaseOperationEvidence({
   return (
     <section
       className="min-w-0 space-y-2 rounded-lg border p-3"
-      aria-label="Recorded database operation"
+      aria-label="Database deployment result"
     >
-      <h5 className="font-medium">Recorded database operation</h5>
+      <h5 className="font-medium">Database deployment result</h5>
       <dl className="space-y-1 text-sm">
         <dt>Operation ID</dt>
         <dd>{operation.id}</dd>
-        <dt>Recorded state</dt>
+        <dt>Request state</dt>
         <dd>{operation.state}</dd>
         <dt>Recorded configuration generation</dt>
         <dd>{operation.snapshot.resource_generation}</dd>
@@ -265,7 +265,7 @@ function DatabaseOperationEvidence({
         <dd>{operation.release?.canonical_image ?? "Not prepared"}</dd>
         <dt>Plan hash</dt>
         <dd>{operation.plan_hash ?? "Not prepared"}</dd>
-        <dt>Recorded engine readiness</dt>
+        <dt>Readiness at completion</dt>
         <dd>
           {operation.result
             ? operation.result.ready

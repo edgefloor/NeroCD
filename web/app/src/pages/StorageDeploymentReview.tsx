@@ -467,16 +467,14 @@ export function StorageDeploymentReview(
       <h6 className="font-medium">Deploy image with persistent uploads</h6>
       {initial ? (
         <p>
-          This first deployment creates the configured platform-owned upload
-          volume when needed and preserves existing or restored data. Data
-          retention is retain. Image rollback does not undo upload writes.
-          Public routes and HTTPS are not created by this request.
+          Uploads are kept across redeployments. Rolling back an image does not
+          undo uploaded-file changes. Configure a route for public access after
+          deployment.
         </p>
       ) : (
         <p>
-          The previous writer must stop before replacement readiness,
-          interrupting service. The retained upload volume is reused. Image
-          rollback does not undo writes made to uploads.
+          Service stops during replacement. Uploads are kept, and image rollback
+          does not undo uploaded-file changes.
         </p>
       )}
       <StorageDeploymentAdmission
@@ -523,8 +521,7 @@ export function StorageDeploymentReview(
       ) : null}
       {acceptedID ? (
         <p role="status" className="break-all">
-          Deployment request accepted: {acceptedID}. Acceptance does not confirm
-          workload completion or public traffic.
+          Deployment requested. Check progress below. Request: {acceptedID}.
         </p>
       ) : null}
       {refreshing ? (

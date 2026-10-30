@@ -108,7 +108,7 @@ function StorageAccess({
   });
   const owner = Boolean(
     members.data &&
-      canOwnProject(principal.data, members.data, resource.project_id),
+    canOwnProject(principal.data, members.data, resource.project_id),
   );
   return (
     <section
@@ -118,28 +118,17 @@ function StorageAccess({
     >
       <h5 className="font-medium">Persistent storage</h5>
       <p>
-        Configure one retained local volume at a fixed container mount. Saving
-        records desired metadata only; it does not create a volume or deploy the
-        application.
-      </p>
-      <p>
-        Deployment requires a storage-capable agent. Deployment preflight
-        verifies prerequisites. Actual volume materialization and workload use
-        are unknown here.
+        Save a retained local volume for application uploads. Deployment creates
+        the volume separately.
       </p>
       <p className="text-sm">
-        The initial volume is empty. Image files and existing uploads are not
-        imported. Ownership and permission initialization are unsupported; write
-        access for non-root images must be qualified separately.
+        A new volume starts empty. Existing uploads are not copied. Check that
+        your image can write to the mount; ownership and permissions are not
+        initialized automatically.
       </p>
       <p className="text-sm">
-        Only one release can write at a time, so replacement can interrupt
-        service. Image rollback does not undo file writes. The volume is
-        retained when releases are cleaned up.
-      </p>
-      <p className="text-sm">
-        For an application with HTTPS, review its route when replacing the
-        deployment. Storage configuration does not switch public traffic.
+        Replacement may interrupt service. Image rollback does not undo file
+        writes. Cleaning up a release keeps the volume.
       </p>
       <Button
         type="button"
@@ -733,16 +722,14 @@ function ConfiguredStorageArchives(viewModel: ConfiguredStorageArchivesModel) {
     accessDenied,
   } = viewModel;
 
-  if (
-    !(
-      !failed &&
-      storage.data?.kind === "platform_managed" &&
-      storage.data.driver === "local" &&
-      binding.data &&
-      storage.data.binding_id === binding.data.id &&
-      storage.data.destination_id === binding.data.destination_id
-    )
-  )
+  if (!(
+    !failed &&
+    storage.data?.kind === "platform_managed" &&
+    storage.data.driver === "local" &&
+    binding.data &&
+    storage.data.binding_id === binding.data.id &&
+    storage.data.destination_id === binding.data.destination_id
+  ))
     return null;
   return (
     <StorageArchives

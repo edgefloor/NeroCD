@@ -482,9 +482,7 @@ export function ProjectSecrets({
       <CardHeader>
         <CardTitle>Project managed secrets</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Store encrypted, versioned project secrets. Workload injection is not
-          available yet. Storage requires the server's configured secret
-          keyring.
+          Create and rotate encrypted secrets for this project.
         </p>
       </CardHeader>
       <CardContent className="min-w-0 space-y-4">

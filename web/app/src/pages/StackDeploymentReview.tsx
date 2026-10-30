@@ -69,15 +69,13 @@ export function StackDeploymentReview(input: {
         {source.public_component}, container port {source.container_port}.
       </p>
       <p className="text-sm">
-        Save referenced variables and managed secret versions in Runtime
-        configuration before deployment. Required values are checked before the
-        current stack stops. Secret values are never shown here.
+        Save required variables and secret references in Runtime configuration
+        first. They are checked before the current stack stops.
       </p>
       {starting ? (
         <p className="text-sm">
-          Start recreates containers from the current saved configuration and
-          reuses retained named volumes. Container IDs may change. Review
-          variables, managed secret references and HTTPS routes before starting.
+          Start recreates containers using saved settings and retained volumes.
+          Review runtime settings and routes before starting.
         </p>
       ) : null}
       <InitialStackDeploymentSettings {...viewModel} />
@@ -100,8 +98,7 @@ export function StackDeploymentReview(input: {
       <ReviewedStackDeployment {...viewModel} />
       {accepted ? (
         <p role="status">
-          Deployment request accepted: {accepted}. Inspect the operation for
-          component readiness and public route continuity.
+          Deployment requested. Check progress below. Request: {accepted}.
         </p>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}

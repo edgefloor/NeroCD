@@ -363,8 +363,7 @@ function Deployments(props: {
       </h5>
       {acceptedID ? (
         <p role="status" className="break-all">
-          Deployment request accepted: {acceptedID}. Acceptance does not confirm
-          workload completion or public traffic.
+          Deployment requested. Check progress below. Request: {acceptedID}.
         </p>
       ) : null}
       {acceptedRefreshError ? <p role="alert">{acceptedRefreshError}</p> : null}
@@ -1202,10 +1201,7 @@ function OperationEvidence(viewModel: OperationEvidenceModel) {
       ) : null}
       <OperationOutcome {...viewModel} />
       <p className="text-xs text-muted-foreground">
-        This is persisted operation evidence, not continuous health monitoring.
-        Reconciliation requests a separate observation. The loopback port is
-        local to the runner; no public URL or revision-specific HTTP identity is
-        implied.
+        This result describes the last operation, not current health. Reconcile to check the workload again. The displayed port is local to the runner.
       </p>
       <OperationControls {...viewModel} />
       <OperationOwnerControls {...viewModel} />
@@ -1287,14 +1283,14 @@ function OperationOutcome(viewModel: OperationOutcomeModel) {
       className="space-y-1 text-sm"
       aria-label={
         operation.cleanup_plan
-          ? "Recorded cleanup result"
-          : "Recorded deployment result"
+          ? "Cleanup result"
+          : "Deployment result"
       }
     >
       <h6 className="font-medium">
         {operation.cleanup_plan
-          ? "Recorded cleanup result"
-          : "Recorded deployment result"}
+          ? "Cleanup result"
+          : "Deployment result"}
       </h6>
       <p>Outcome: {operation.result.outcome}</p>
       {operation.stack_stop_plan ? (
@@ -2261,22 +2257,15 @@ function ImageDeploymentAcknowledgment(
   return (
     <>
       <p className="text-xs text-muted-foreground">
-        The readiness path must be relative to the local origin, such as
-        /health. This is a generic HTTP check without revision-specific response
-        headers.{" "}
+        Use an HTTP readiness path such as /health.{" "}
         {portMode === "fixed"
           ? `Port 127.0.0.1:${hostPort}`
           : "The allocated loopback port"}{" "}
-        is local to the runner, not a public application URL. Automatic
-        allocation uses a separate port per release and retains prior containers
-        until explicit cleanup. It does not switch traffic or provision HTTPS.
+        is local to the runner. Configure a route for public access. Automatic allocation retains prior containers until explicit cleanup.
       </p>
       {portMode === "fixed" ? (
         <p role="note" className="text-sm">
-          Reusing the current release’s unprotected port on this binding stops
-          the current container before replacement readiness is verified,
-          interrupting service. Retained-release, other-binding, and
-          proxy-protected port conflicts are rejected.
+          The current release stops before the replacement is ready. Protected ports and ports used by another binding cannot be reused.
         </p>
       ) : null}
       <label className="flex items-start gap-2 text-sm">

@@ -182,7 +182,7 @@ async function initialReview() {
 }
 test("first deployment requires operator settings and reviews exact owned volume and retention", async () => {
   const { fetch, selected } = setup(undefined, initialOptions);
-  expect(screen.getByText(/preserves existing or restored data/)).toBeTruthy();
+  expect(screen.getByText(/Uploads are kept across redeployments/)).toBeTruthy();
   expect(
     screen.getByLabelText<HTMLInputElement>("Runner-local host port").value,
   ).toBe("");
@@ -331,7 +331,7 @@ test("review freezes exact fixed port, full route selection and key before expli
   expect(screen.getByText("ncd_uploads")).toBeTruthy();
   expect(screen.getByText("/app/uploads")).toBeTruthy();
   expect(screen.getByText(/Application data remains/)).toBeTruthy();
-  expect(screen.getByText(/Image rollback does not undo writes/)).toBeTruthy();
+  expect(screen.getByText(/rollback does not undo uploaded-file changes/)).toBeTruthy();
   fireEvent.click(
     screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
   );
@@ -441,7 +441,7 @@ test("accepted receipt remains definitive when history refresh rejects", async (
   fireEvent.click(
     screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
   );
-  await screen.findByText(/Deployment request accepted: hop/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop/);
   await screen.findByText(/was accepted, but history could not be refreshed/);
   expect(selected).toHaveBeenCalledExactlyOnceWith("hop");
   expect(screen.queryByText(/Delivery is unconfirmed/)).toBeNull();
@@ -469,7 +469,7 @@ test("accepted receipt releases submission busy state and bounds stalled refresh
       }),
     );
   });
-  expect(screen.getByText(/Deployment request accepted: hop/)).toBeTruthy();
+  expect(screen.getByText(/Deployment requested. Check progress below. Request: hop/)).toBeTruthy();
   expect(
     screen.queryByRole("button", { name: "Requesting storage deployment..." }),
   ).toBeNull();
@@ -500,7 +500,7 @@ test("retired scope cancels accepted-receipt refresh and ignores a late rejectio
   fireEvent.click(
     screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
   );
-  await screen.findByText(/Deployment request accepted: hop/);
+  await screen.findByText(/Deployment requested. Check progress below. Request: hop/);
   unmount();
   expect(signal?.aborted).toBe(true);
   await act(async () =>

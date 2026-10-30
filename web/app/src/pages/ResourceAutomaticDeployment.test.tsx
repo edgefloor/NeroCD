@@ -53,7 +53,7 @@ test("unavailable options retain saved automatic mode and allow only an explicit
 test.each(["waiting_deployment", "waiting_switch", "succeeded", "failed", "blocked", "expired"] as const)("%s summary reports recorded operations without an uptime or generic reset claim", (state) => {
   const status: AutomaticDeploymentStatus = { mode: "automatic_unprotected", state, reason: state === "succeeded" ? "https_verified" : state === "blocked" ? "switch_hold" : "build_pending", manual_epoch: 1, desired_commit: "a".repeat(40), build_id: "build_b", deployment_operation_id: "deployment_b", switch_operation_id: "switch_b", attempts: 2, observed_loaded_generation: state === "succeeded" ? 8 : 0 };
   render(<AutomaticDeploymentSummary status={status} />);
-  expect(screen.getByText(/not a current uptime or health check/)).toBeTruthy();
+  expect(screen.getByText(/last operation result. Check runtime status for current health/)).toBeTruthy();
   expect(screen.getByText("deployment_b")).toBeTruthy(); expect(screen.getByText("switch_b")).toBeTruthy();
   expect(screen.getByText(/does not reset this automatic deployment's attempt budget/)).toBeTruthy();
   expect(screen.queryByRole("button")).toBeNull();

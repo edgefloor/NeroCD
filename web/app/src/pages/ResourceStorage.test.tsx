@@ -139,9 +139,9 @@ test("owner explicitly saves metadata only and sees immutable retained identity,
     screen.getByText(/Image rollback does not undo file writes/),
   ).toBeTruthy();
   expect(
-    screen.getByText(/Image files and existing uploads are not imported/),
+    screen.getByText(/A new volume starts empty. Existing uploads are not copied/),
   ).toBeTruthy();
-  expect(screen.getByText(/write access for non-root images/)).toBeTruthy();
+  expect(screen.getByText(/Check that your image can write to the mount/)).toBeTruthy();
 });
 test.each(["viewer", "maintainer"])(
   "%s can read configured metadata without a create control",
