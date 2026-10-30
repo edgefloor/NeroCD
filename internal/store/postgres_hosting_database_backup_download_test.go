@@ -152,11 +152,22 @@ func TestPostgresDatabaseDownloadHistoricalCopyAuthorityAndRetention(t *testing.
 			if _, err = f.service.RunnerDatabaseBackupDownloadPlan(ctx, a); !errors.Is(err, auth.ErrForbidden) {
 				t.Fatal("revoked authority", err)
 			}
-			if err = f.service.CloseDatabaseBackupDownload(f.ctx, plan.SessionID, false); err != nil {
+			// Fail the controller settlement transaction after bytes could have been delivered.
+			if _, err = f.db.Exec(f.ctx, `CREATE FUNCTION reject_download_settlement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected durable settlement failure'; END $$; CREATE TRIGGER reject_download_settlement BEFORE UPDATE ON hosting_database_backup_downloads FOR EACH ROW EXECUTE FUNCTION reject_download_settlement()`); err != nil {
 				t.Fatal(err)
 			}
+			if err = f.service.CloseDatabaseBackupDownload(f.ctx, plan.SessionID, true); err == nil {
+				t.Fatal("injected settlement failure was ignored")
+			}
+			if _, err = f.db.Exec(f.ctx, `DROP TRIGGER reject_download_settlement ON hosting_database_backup_downloads; DROP FUNCTION reject_download_settlement()`); err != nil {
+				t.Fatal(err)
+			}
+			var priorState string
+			if err = f.db.QueryRow(f.ctx, `SELECT state FROM hosting_database_backup_downloads WHERE id=$1`, plan.SessionID).Scan(&priorState); err != nil || priorState != "streaming" {
+				t.Fatal("failed close changed durable state", err)
+			}
 			if _, err = f.service.RunnerDatabaseBackupDownloadPlan(ctx, a); err == nil {
-				t.Fatal("closed stream replay")
+				t.Fatal("revoked stream replay")
 			}
 			now := time.Now().UTC()
 			for range 2 {

@@ -25,8 +25,9 @@ import (
 )
 
 func TestDatabaseBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
-	for _, mode := range []string{"success", "missing", "tampered", "disconnect", "completion_loss", "changed_plan"} {
+	for _, mode := range []string{"success", "missing", "tampered", "disconnect", "completion_loss", "changed_plan", "settlement_failure", "settlement_failure_completion_loss"} {
 		t.Run(mode, func(t *testing.T) {
+			lostCompletion := mode == "completion_loss" || mode == "settlement_failure_completion_loss"
 			data := []byte("archive bytes must never enter journal")
 			digest := sha256.Sum256(data)
 			key := hex.EncodeToString(digest[:])
@@ -141,6 +142,10 @@ func TestDatabaseBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 						}
 					}
 
+					if strings.HasPrefix(mode, "settlement_failure") {
+						w.WriteHeader(409)
+						return
+					}
 					_ = json.NewEncoder(w).Encode(map[string]string{"session_id": p.SessionID, "plan_hash": p.Hash})
 				case "/api/v1/runners/complete":
 					call := completions.Add(1)
@@ -155,7 +160,7 @@ func TestDatabaseBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 						t.Error("completion replay changed metadata")
 					}
 					expected := "succeeded"
-					if mode == "missing" || mode == "tampered" || mode == "disconnect" || mode == "changed_plan" {
+					if mode == "missing" || mode == "tampered" || mode == "disconnect" || mode == "changed_plan" || strings.HasPrefix(mode, "settlement_failure") {
 						expected = "failed"
 					}
 					if request.Status != expected {
@@ -164,7 +169,7 @@ func TestDatabaseBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 					if len(j.Snapshot().Completions) != 1 {
 						t.Error("completion was not durable before send")
 					}
-					if mode == "completion_loss" && !allowCompletion.Load() {
+					if lostCompletion && !allowCompletion.Load() {
 						conn, _, e := w.(http.Hijacker).Hijack()
 						if e != nil {
 							t.Error(e)
@@ -196,14 +201,14 @@ func TestDatabaseBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 			defer server.Close()
 			drained := false
 			err = executeDatabaseBackupDownloadClaim(s, j, func(context.Context) error { drained = true; return nil }, server.URL, "token", claim, &DatabaseExecutionConfig{BackupDownloads: true, StateRoot: parentRoot, TrustedLoopbackHTTP: true})
-			if mode == "completion_loss" {
+			if lostCompletion {
 				if err == nil || len(j.Snapshot().Completions) != 1 {
 					t.Fatal("lost completion did not retain metadata")
 				}
 			} else if err != nil || len(j.Snapshot().Completions) != 0 {
 				t.Fatalf("execution/completion failed %v", err)
 			}
-			if mode == "completion_loss" {
+			if lostCompletion {
 				// If startup accidentally reopened the copy, it would now fail.
 				if e := os.Remove(filepath.Join(root, key)); e != nil {
 					t.Fatal(e)
