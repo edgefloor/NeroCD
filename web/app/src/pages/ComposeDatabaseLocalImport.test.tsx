@@ -199,7 +199,7 @@ test("admission precedes one native transfer and only ready SQL enables confirma
   expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(
     true,
   );
-  expect(screen.getByText(/File transfer attempted/)).toBeTruthy();
+  expect(screen.getByText(/File upload attempted/)).toBeTruthy();
   expect(
     (
       screen.getByRole("button", {
@@ -283,9 +283,7 @@ test.each([
     fireEvent.click(
       screen.getByRole("button", { name: "Send file for inspection" }),
     );
-    await screen.findByText(
-      /File transfer result requires inspection status review/,
-    );
+    await screen.findByText(/File upload result needs checking/);
     await waitFor(() =>
       expect(
         vi.mocked(imports.getDatabaseImportUploadStage).mock.calls.length,
@@ -305,26 +303,60 @@ test.each([
     expect(imports.sendDatabaseImportFile).toHaveBeenCalledOnce();
   },
 );
-test("a rejected upload receipt never retries the body or offers import", async () => {
-  vi.mocked(imports.sendDatabaseImportFile).mockRejectedValue(
-    new ApiError(412, "receipt mismatch", null),
-  );
-  mount();
-  await admit();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Send file for inspection" }),
-  );
-  await screen.findByText(/File upload admission was rejected/);
-  expect(imports.sendDatabaseImportFile).toHaveBeenCalledOnce();
-  expect(
-    (
-      screen.getByRole("button", {
-        name: "Send file for inspection",
-      }) as HTMLButtonElement
-    ).disabled,
-  ).toBe(true);
-  expect(imports.requestDatabaseImport).not.toHaveBeenCalled();
-});
+test.each([412, 429])(
+  "definitive HTTP %s rejection allows a fresh upload but never resends the old file",
+  async (status) => {
+    vi.mocked(imports.sendDatabaseImportFile).mockRejectedValue(
+      new ApiError(status, "upload not started", null),
+    );
+    mount();
+    await admit();
+    const original = vi.mocked(imports.admitDatabaseImportUpload).mock
+      .calls[0]![1];
+    fireEvent.click(
+      screen.getByRole("button", { name: "Send file for inspection" }),
+    );
+    await screen.findByText(/File upload could not start/);
+    expect(imports.sendDatabaseImportFile).toHaveBeenCalledOnce();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Send file for inspection",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("Local SQL file") as HTMLInputElement).disabled,
+    ).toBe(false);
+    vi.mocked(imports.admitDatabaseImportUpload).mockResolvedValue({
+      ...stage,
+      id: "fresh_stage",
+    });
+    vi.mocked(imports.getDatabaseImportUploadStage).mockResolvedValue({
+      ...stage,
+      id: "fresh_stage",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Prepare local file upload" }),
+    );
+    await waitFor(() =>
+      expect(imports.admitDatabaseImportUpload).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      vi.mocked(imports.admitDatabaseImportUpload).mock.calls[1]![1].request_id,
+    ).not.toBe(original.request_id);
+    await screen.findByText(/Inspection fresh_stage · queued/);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Send file for inspection",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(imports.sendDatabaseImportFile).toHaveBeenCalledOnce();
+    expect(imports.requestDatabaseImport).not.toHaveBeenCalled();
+  },
+);
 test("sending-byte progress is separate from persistence and Stop aborts transfer then checks stage", async () => {
   vi.mocked(imports.sendDatabaseImportFile).mockImplementation(
     (_stage, _file, signal, progress) =>

@@ -104,6 +104,7 @@ function ExternalImportPanel({
   const [sentBytes, setSentBytes] = useState(0);
   const [bodyError, setBodyError] = useState<unknown>();
   const bodyAttempts = useRef(new Set<string>());
+  const rejectedBodies = useRef(new Set<string>());
   const bodyController = useRef<AbortController | null>(null);
   const [inspection, setInspection] = useState<Inspection>();
   const [operation, setOperation] = useState<{
@@ -222,7 +223,11 @@ function ExternalImportPanel({
     sending ||
     Boolean(attempt) ||
     ((sourceKind === "s3" ||
-      Boolean(stage && bodyAttempts.current.has(stage.id))) &&
+      Boolean(
+        stage &&
+        bodyAttempts.current.has(stage.id) &&
+        !rejectedBodies.current.has(stage.id),
+      )) &&
       ["queued", "running"].includes(stage?.state ?? "")) ||
     Boolean(
       imported &&
@@ -422,7 +427,11 @@ function ExternalImportPanel({
     } catch (cause) {
       if (!c.signal.aborted) {
         if (databaseDenied(cause)) retireAccess();
-        else setBodyError(cause);
+        else {
+          if (cause instanceof ApiError && [412, 429].includes(cause.status))
+            rejectedBodies.current.add(stage.id);
+          setBodyError(cause);
+        }
       }
     } finally {
       c.signal.removeEventListener("abort", retire);
@@ -446,7 +455,7 @@ function ExternalImportPanel({
     >
       <p>
         {sourceKind === "upload"
-          ? "Select a local plain or gzip MySQL SQL file. Admission records the intended target before one native file transfer; only a ready inspection confirms persisted and verified SQL."
+          ? "Choose a plain or gzip MySQL SQL file, then prepare and upload it to the selected target. Wait for a ready inspection before confirming replacement."
           : "Inspect a plain or gzip MySQL SQL object from an existing configured S3 destination."}{" "}
         Inspection never stops target writers. Encoded and decoded SQL are each
         limited to 10 GiB. This does not create a backup record.
@@ -546,22 +555,25 @@ function ExternalImportPanel({
             </>
           ) : stage &&
             bodyAttempts.current.has(stage.id) &&
+            !rejectedBodies.current.has(stage.id) &&
             ["queued", "running"].includes(stage.state) ? (
             <p role="status">
-              File transfer attempted. Waiting for authoritative inspection
-              status; the file will not be sent again automatically.
+              File upload attempted. Checking inspection status; the file will
+              not be sent again automatically.
             </p>
           ) : null}
           {bodyError ? (
             <p role="alert">
-              {bodyError instanceof ApiError && bodyError.status === 412
-                ? "File upload admission was rejected because its receipt no longer matches. The body will not be sent again; prepare a fresh upload."
-                : "File transfer result requires inspection status review. Refresh this stage; do not resend the body. A failed or interrupted stage requires a fresh upload."}
+              {bodyError instanceof ApiError &&
+              [412, 429].includes(bodyError.status)
+                ? "File upload could not start. Prepare a new upload; this file will not be sent again for the previous attempt."
+                : "File upload result needs checking. Refresh its inspection status. A failed or interrupted upload needs a new upload; the file will not be sent again automatically."}
             </p>
           ) : null}
           <p>
-            File content is streamed once without loading it all into
-            JavaScript. Resumable chunks and server paths are unavailable.
+            Interrupted uploads cannot resume. Choose a file and start a new
+            upload after checking the previous result. Importing a file by
+            server path is unavailable.
           </p>
         </>
       ) : (
