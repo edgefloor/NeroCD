@@ -21,6 +21,7 @@ import { PageNavigation } from "@/components/common/PageNavigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { maximumPageOffset } from "@/router/search";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState, type FormEvent } from "react";
@@ -695,21 +696,17 @@ export function ProjectHosting({
             <p role="alert">Backup recovery project is unavailable.</p>
           )
         ) : null}
-        <div className="max-w-xl space-y-1.5">
-          <label htmlFor={`${id}-project`}>Hosting project</label>
-          <select
-            id={`${id}-project`}
-            className={selectClass}
-            value={project?.id ?? ""}
-            onChange={(event) => setProjectID(event.target.value)}
-          >
-            <option value="">Select a project</option>
-            {projects.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+          <div className="min-w-0 space-y-1">
+            <label className="block text-sm" htmlFor={`${id}-project`}>Hosting project</label>
+            {!project ? <p className="text-sm text-muted-foreground">Choose a project to manage or view saved configuration.</p> : null}
+          </div>
+          <div className="w-full shrink-0 sm:w-72">
+            <Select id={`${id}-project`} value={project?.id ?? ""} onChange={(event) => setProjectID(event.target.value)}>
+              <option value="">Select a project</option>
+              {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </Select>
+          </div>
         </div>
         {project ? (
           <>
@@ -723,11 +720,7 @@ export function ProjectHosting({
               blocked={unavailable}
             />
           </>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Choose a project to manage or view saved configuration.
-          </p>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );

@@ -19,6 +19,7 @@ import { ProtectedSecretValue } from "@/components/common/ProtectedSecretValue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { canMaintainProject } from "@/lib/permissions";
 import { maximumPageOffset } from "@/router/search";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -487,21 +488,17 @@ export function ProjectSecrets({
         </p>
       </CardHeader>
       <CardContent className="min-w-0 space-y-4">
-        <div className="max-w-xl space-y-2">
-          <label htmlFor={`${id}-project`}>Secrets project</label>
-          <select
-            id={`${id}-project`}
-            className="h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm"
-            value={project?.id ?? ""}
-            onChange={(event) => setProjectID(event.target.value)}
-          >
-            <option value="">Select a project</option>
-            {projects.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+          <div className="min-w-0 space-y-1">
+            <label className="block text-sm" htmlFor={`${id}-project`}>Secrets project</label>
+            {!project ? <p className="text-sm text-muted-foreground">Choose a project to view managed secrets.</p> : null}
+          </div>
+          <div className="w-full shrink-0 sm:w-72">
+            <Select id={`${id}-project`} value={project?.id ?? ""} onChange={(event) => setProjectID(event.target.value)}>
+              <option value="">Select a project</option>
+              {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </Select>
+          </div>
         </div>
         {project ? (
           <ProjectSecretList
@@ -515,11 +512,7 @@ export function ProjectSecrets({
             owner={owner}
             blocked={unavailable}
           />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Choose a project to view managed secrets.
-          </p>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );

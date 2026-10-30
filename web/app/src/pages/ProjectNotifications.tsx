@@ -17,9 +17,10 @@ import { readBackupMetadata } from "@/components/hosting/backup-access";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { canOwnProject } from "@/lib/permissions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 
 const eventNames = {
   backup_failed: "Backup failed",
@@ -739,6 +740,7 @@ export function ProjectNotifications({
   members: ProjectMember[];
   unavailable?: boolean;
 }) {
+  const id = useId();
   const [project, setProject] = useState("");
   const exists = projects.some((p) => p.id === project);
   const viewer = Boolean(
@@ -764,21 +766,18 @@ export function ProjectNotifications({
         </p>
       </CardHeader>
       <CardContent className="min-w-0 space-y-4">
-        <label className="block max-w-xl">
-          Notifications project
-          <select
-            className={selectClass}
-            value={exists ? project : ""}
-            onChange={(e) => setProject(e.target.value)}
-          >
-            <option value="">Select a project</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+          <span className="min-w-0 space-y-1">
+            <label className="block text-sm" htmlFor={`${id}-project`}>Notifications project</label>
+            {!exists ? <span className="block text-sm text-muted-foreground">Select a project to view notification settings.</span> : null}
+          </span>
+          <span className="w-full shrink-0 sm:w-72">
+            <Select id={`${id}-project`} value={exists ? project : ""} onChange={(e) => setProject(e.target.value)}>
+              <option value="">Select a project</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+          </span>
+        </div>
         {exists && viewer ? (
           <Notifications
             key={JSON.stringify([
@@ -794,9 +793,7 @@ export function ProjectNotifications({
           />
         ) : exists ? (
           <p role="alert">Notification access is unavailable.</p>
-        ) : (
-          <p>Select a project to view notification settings.</p>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );
